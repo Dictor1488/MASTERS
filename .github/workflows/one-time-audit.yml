@@ -1,0 +1,63 @@
+name: One-time MASTERS audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/one-time-audit.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Generate audit
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          out = []
+          out.append('# MASTERS code audit')
+          out.append('')
+          for path in sorted(Path('.').rglob('*')):
+              if '.git' in path.parts or not path.is_file():
+                  continue
+              out.append(f'- {path.as_posix()}')
+          out.append('')
+
+          py = Path('python/gui/mods/mod_under_pressure_masters.py')
+          src = py.read_text(encoding='utf-8')
+          tree = ast.parse(src)
+          out.append('## Top-level functions/classes')
+          for node in tree.body:
+              if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                  out.append(f'- {node.__class__.__name__} {node.name} lines {node.lineno}-{getattr(node, "end_lineno", node.lineno)}')
+                  if isinstance(node, ast.ClassDef):
+                      for child in node.body:
+                          if isinstance(child, ast.FunctionDef):
+                              out.append(f'  - method {child.name} lines {child.lineno}-{getattr(child, "end_lineno", child.lineno)}')
+          out.append('')
+          out.append('## Keyword hits')
+          keys = ('battle','badge','mark','moe','result','damage','config','offset','style','history','mastery')
+          for i, line in enumerate(src.splitlines(), 1):
+              low = line.lower()
+              if any(k in low for k in keys):
+                  out.append(f'{i}: {line}')
+          Path('MASTERS_AUDIT.md').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          PY
+      - name: Commit audit and remove workflow
+        shell: bash
+        run: |
+          rm .github/workflows/one-time-audit.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Add MASTERS code audit"
+          git push
