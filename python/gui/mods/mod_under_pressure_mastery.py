@@ -143,54 +143,10 @@ except AttributeError:
 
 _CACHE_DIR = os.path.normpath(os.path.join(os.path.dirname(_prefsFilePath), 'mods', 'mastery'))
 _CACHE_FILE = os.path.join(_CACHE_DIR, 'cache.dat')
-_CONFIG_DIR = os.path.normpath(os.path.join(os.getcwd(), 'mods', 'configs', 'mastery'))
-_CONFIG_FILE = os.path.join(_CONFIG_DIR, 'mastery.json')
 _CACHE_VERSION = 10
 _CACHE_TTL_SECONDS = 3 * 24 * 3600
 _CACHE_SAVE_DEBOUNCE = 3.0
-_CONFIG_DEFAULTS = {
-    'mode': 'both',
-    'modes': {
-        'both': 'masters and mark badge',
-        'mastery': 'masters only, mark badge off',
-        'marks': 'mark badge only, masters off',
-    },
-    'badgeStyle': 'classic',
-    'badgeStyles': {
-        'classic': 'stars and value centered (original)',
-        'compact': 'stars and bars on the left (screenshot layout)',
-        'polaroid': 'wide framed badge (formerly html)',
-        'neer': 'golden tank silhouette filled by mark %',
-        'minimal': 'simple text only (percentage + damage)',
-    },
-}
-_CONFIG_MODES = {
-    'both': 0,
-    'mastery': 1,
-    'masters': 1,
-    'marks': 2,
-    'mark': 2,
-}
-_CONFIG_BADGE_STYLES = {
-    'classic': 0,
-    'original': 0,
-    'old': 0,
-    'compact': 1,
-    'new': 1,
-    'left': 1,
-    'html': 2,
-    'polaroid': 2,
-    'wide': 2,
-    'v3': 2,
-    'third': 2,
-    'neer': 3,
-    'tank': 3,
-    'silhouette': 3,
-    'minimal': 4,
-    'min': 4,
-    'simple': 4,
-    'text': 4,
-}
+
 
 
 def _cancelCallbackSafe(cbid):
