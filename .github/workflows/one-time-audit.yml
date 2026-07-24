@@ -61,3 +61,4 @@ jobs:
           git add -A
           git commit -m "Add MASTERS code audit"
           git push
+# trigger existing workflow
