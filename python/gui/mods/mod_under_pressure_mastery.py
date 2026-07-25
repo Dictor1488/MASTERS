@@ -524,6 +524,10 @@ class MasteryController(object):
         self._injectorView = view
         self._panelReady = False
         self._injectPending = False
+        # Force the next _updateVisibility() call to actually push the
+        # visibility flag to this (possibly brand new) panel instance,
+        # instead of assuming it already matches a stale cached state.
+        self._lastVisibleState = None
 
     def _onInjectorDisposed(self, view):
         if view == self._injectorView:
@@ -1046,10 +1050,19 @@ class MainMod(object):
     def _onLobbyInitialized(self, event):
         if APP_NAME_SPACE is not None and event.ns != APP_NAME_SPACE.SF_LOBBY:
             return
-        self._controller._injectorView = None
-        self._controller._panelReady = False
-        self._controller._injectPending = False
-        self._controller._injectFlash()
+        controller = self._controller
+        # If a panel already exists or an injection is already in flight
+        # (e.g. triggered a moment earlier by onAccountShowGUI/enable()),
+        # do NOT force another loadView() here. Doing so races with the
+        # in-flight injection and can create a second, orphaned
+        # MasteryPanelHangar view that never receives further position/
+        # visibility updates - it stays stuck on screen at its default
+        # position, while the "real" panel the controller talks to can end
+        # up hidden. Only (re)inject if we genuinely have nothing pending.
+        if controller._injectorView is not None or controller._injectPending:
+            return
+        controller._panelReady = False
+        controller._injectFlash()
 
 
 _g_mod = MainMod()
