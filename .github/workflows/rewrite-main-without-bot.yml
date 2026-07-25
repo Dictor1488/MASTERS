@@ -1,0 +1,39 @@
+name: Rewrite main without Actions bot
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/rewrite-main-without-bot.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rewrite branch
+        uses: actions/checkout@v4
+        with:
+          ref: rewrite-main-without-actions-bot
+          fetch-depth: 0
+
+      - name: Mirror current main snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          snapshot_dir="$(mktemp -d)"
+          git archive origin/main | tar -x -C "$snapshot_dir"
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a "$snapshot_dir"/. .
+          rm -f .github/workflows/rewrite-main-without-bot.yml
+
+          git config user.name "Dictor1488"
+          git config user.email "168811367+Dictor1488@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Rebuild main history without GitHub Actions bot"
+          git push origin HEAD:rewrite-main-without-actions-bot
