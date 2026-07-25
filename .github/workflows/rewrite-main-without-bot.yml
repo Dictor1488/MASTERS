@@ -37,3 +37,5 @@ jobs:
           git diff --cached --check
           git commit -m "Rebuild main history without GitHub Actions bot"
           git push origin HEAD:rewrite-main-without-actions-bot
+
+# trigger
