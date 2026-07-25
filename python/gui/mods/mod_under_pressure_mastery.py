@@ -53,7 +53,7 @@ except ImportError:
 _DEBUG = os.path.isfile('.debug_mods')
 logger = logging.getLogger('under_pressure.masters')
 logger.setLevel(logging.DEBUG if _DEBUG else logging.ERROR)
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 _LINKAGE_HANGAR = 'MasteryPanelHangar'
 _SWF_HANGAR = 'MasteryPanelHangar.swf'
@@ -76,6 +76,11 @@ _MOE_PERCENTILE_TO_KEY = ((u'20', 'p20'), (u'40', 'p40'), (u'55', 'p55'),
 _MOE_KEYS = ('p20', 'p40', 'p55', 'p60', 'p65', 'p70', 'p75', 'p85', 'p95', 'p100')
 _INJECT_RETRY_DELAY = 0.5
 _INJECT_MAX_ATTEMPTS = 30
+_INJECT_WATCHDOG_DELAY = 3.0
+_REINJECT_DELAY = 0.2
+_LOBBY_ROUTE_FALLBACK_DELAY = 5.0
+_VEHICLE_READY_RETRY_DELAY = 0.5
+_VEHICLE_READY_MAX_ATTEMPTS = 30
 _API_TIMEOUT = 5.0
 _API_MAX_ATTEMPTS = 3
 _API_RETRY_BASE_DELAY = 2.0
@@ -414,13 +419,20 @@ class MasteryController(object):
         self._injectorView = None
         self._panelReady = False
         self._injectPending = False
+        self._injectCallbackId = None
+        self._injectWatchdogCallbackId = None
+        self._routeFallbackCallbackId = None
+        self._injectGeneration = 0
         self._enabled = False
+        self._lobbyReady = False
+        self._awaitingRouteEvent = True
         self._hangarVisible = False
         self._visibleByData = False
         self._lastVisibleState = None
         self._position = [100, 100]
         self._viewMode = _DEFAULT_VIEW_MODE
         self._refreshCallbackId = None
+        self._vehicleReadyAttempts = 0
         self._saveCallbackId = None
         self._saveRev = 0
         self._xpCache = {}
@@ -444,22 +456,49 @@ class MasteryController(object):
     def clearActiveAccount(self):
         self._currentAccountDBID = 0
 
+    @staticmethod
+    def _isHangarRoute(routeInfo):
+        text = u' '.join(unicode(value).lower() for value in (
+            routeInfo, getattr(routeInfo, 'state', None),
+            getattr(routeInfo, 'name', None), getattr(routeInfo, 'path', None))
+                         if value is not None)
+        if any(value in text for value in ('postbattle', 'post_battle', 'battle_result',
+                                            'battlepass', 'battle_pass', 'store', 'shop',
+                                            'research', 'techtree', 'tech_tree', 'crew', 'mission')):
+            return False
+        return 'hangar' in text or 'garage' in text
+
+    @staticmethod
+    def _isLobbyAppReady():
+        try:
+            app = ServicesLocator.appLoader.getDefLobbyApp()
+            return bool(app and app.initialized)
+        except Exception:
+            return False
+
+    def _canInject(self):
+        return bool(self._enabled and self._lobbyReady and not self._awaitingRouteEvent and
+                    self._hangarVisible and self._injectorView is None)
+
     def enable(self):
         if self._enabled:
             return
         self._enabled = True
-        g_currentVehicle.onChanged += self._onVehicleChanged
+        self._lobbyReady = self._isLobbyAppReady()
+        self._awaitingRouteEvent = True
+        self._hangarVisible = False
+        self._vehicleReadyAttempts = 0
+        try:
+            g_currentVehicle.onChanged += self._onVehicleChanged
+        except Exception:
+            pass
         lsm = getLobbyStateMachine()
         if lsm is not None:
             try:
                 lsm.onVisibleRouteChanged += self._onVisibleRouteChanged
-                self._hangarVisible = self._isHangarRoute(lsm.visibleRouteInfo)
             except Exception:
-                self._hangarVisible = True
-        else:
-            self._hangarVisible = True
-        if self._hangarVisible:
-            self._injectFlash()
+                pass
+        self._scheduleRouteFallback()
 
     def disable(self):
         if not self._enabled:
@@ -477,69 +516,176 @@ class MasteryController(object):
                 pass
         _cancelCallbackSafe(self._refreshCallbackId)
         self._refreshCallbackId = None
-        if self._injectorView is not None:
+        self._vehicleReadyAttempts = 0
+        self._lobbyReady = False
+        self._awaitingRouteEvent = True
+        self._hangarVisible = False
+        self._visibleByData = False
+        self._resetInjectorState(True)
+
+    def onLobbyInitialized(self):
+        if not self._enabled:
+            return
+        self._resetInjectorState(True)
+        self._lobbyReady = True
+        self._awaitingRouteEvent = True
+        self._hangarVisible = False
+        self._vehicleReadyAttempts = 0
+        self._scheduleRouteFallback()
+
+    def _scheduleRouteFallback(self):
+        _cancelCallbackSafe(self._routeFallbackCallbackId)
+        self._routeFallbackCallbackId = None
+        if not self._enabled:
+            return
+        generation = self._injectGeneration
+        self._routeFallbackCallbackId = BigWorld.callback(
+            _LOBBY_ROUTE_FALLBACK_DELAY,
+            lambda: self._applyRouteFallback(generation))
+
+    def _applyRouteFallback(self, generation):
+        self._routeFallbackCallbackId = None
+        if generation != self._injectGeneration or not self._enabled:
+            return
+        self._lobbyReady = self._isLobbyAppReady()
+        lsm = getLobbyStateMachine()
+        routeInfo = getattr(lsm, 'visibleRouteInfo', None) if lsm is not None else None
+        self._hangarVisible = self._isHangarRoute(routeInfo)
+        self._awaitingRouteEvent = False
+        self._lastVisibleState = None
+        if self._hangarVisible:
+            self._scheduleInject()
+            self._scheduleRefresh(0.1)
+        else:
+            self._updateVisibility()
+
+    def _onVisibleRouteChanged(self, routeInfo):
+        _cancelCallbackSafe(self._routeFallbackCallbackId)
+        self._routeFallbackCallbackId = None
+        self._lobbyReady = self._isLobbyAppReady()
+        self._awaitingRouteEvent = False
+        self._hangarVisible = self._isHangarRoute(routeInfo)
+        self._lastVisibleState = None
+        self._vehicleReadyAttempts = 0
+        if self._hangarVisible:
+            if self._injectorView is None:
+                self._scheduleInject()
+            else:
+                self._scheduleRefresh(0.1)
+        self._updateVisibility()
+
+    def _resetInjectorState(self, hideView=False):
+        self._injectGeneration += 1
+        _cancelCallbackSafe(self._injectCallbackId)
+        _cancelCallbackSafe(self._injectWatchdogCallbackId)
+        _cancelCallbackSafe(self._routeFallbackCallbackId)
+        self._injectCallbackId = None
+        self._injectWatchdogCallbackId = None
+        self._routeFallbackCallbackId = None
+        oldView = self._injectorView
+        self._injectorView = None
+        self._panelReady = False
+        self._injectPending = False
+        self._lastVisibleState = None
+        if hideView and oldView is not None:
             try:
-                self._injectorView.flashObject.as_setVisible(False)
+                oldView.flashObject.as_setVisible(False)
             except Exception:
                 pass
 
-    @staticmethod
-    def _isHangarRoute(routeInfo):
-        text = u' '.join(unicode(value).lower() for value in (
-            routeInfo, getattr(routeInfo, 'state', None),
-            getattr(routeInfo, 'name', None), getattr(routeInfo, 'path', None))
-                         if value is not None)
-        if any(value in text for value in ('postbattle', 'post_battle', 'battle_result',
-                                            'battlepass', 'battle_pass', 'store', 'shop',
-                                            'research', 'techtree', 'tech_tree', 'crew', 'mission')):
-            return False
-        return 'hangar' in text or 'garage' in text
-
-    def _onVisibleRouteChanged(self, routeInfo):
-        self._hangarVisible = self._isHangarRoute(routeInfo)
-        self._lastVisibleState = None
-        if self._hangarVisible and self._injectorView is None:
-            self._injectFlash()
-        self._updateVisibility()
-
-    def _injectFlash(self, attempt=0):
-        if not self._enabled or self._injectorView is not None:
+    def _scheduleInject(self, delay=0.0, attempt=0):
+        if not self._canInject():
             return
-        if self._injectPending and attempt == 0:
+        _cancelCallbackSafe(self._injectCallbackId)
+        self._injectCallbackId = None
+        generation = self._injectGeneration
+        if delay <= 0:
+            self._injectFlash(attempt, generation)
+        else:
+            self._injectCallbackId = BigWorld.callback(
+                delay, lambda: self._injectFlash(attempt, generation))
+
+    def _injectFlash(self, attempt=0, generation=None):
+        self._injectCallbackId = None
+        if generation is None:
+            generation = self._injectGeneration
+        if generation != self._injectGeneration or not self._canInject():
+            self._injectPending = False
+            return
+        if self._injectPending:
             return
         self._injectPending = True
         try:
             app = ServicesLocator.appLoader.getDefLobbyApp()
-            if app and app.initialized:
-                app.loadView(SFViewLoadParams(_LINKAGE_HANGAR))
-                return
+            if not (app and app.initialized):
+                raise RuntimeError('lobby app is not ready')
+            app.loadView(SFViewLoadParams(_LINKAGE_HANGAR))
+            if self._injectorView is None:
+                _cancelCallbackSafe(self._injectWatchdogCallbackId)
+                self._injectWatchdogCallbackId = BigWorld.callback(
+                    _INJECT_WATCHDOG_DELAY,
+                    lambda: self._onInjectWatchdog(generation, attempt))
+            else:
+                self._injectPending = False
+            return
         except Exception:
-            pass
-        if attempt < _INJECT_MAX_ATTEMPTS:
-            BigWorld.callback(_INJECT_RETRY_DELAY, lambda: self._injectFlash(attempt + 1))
-        else:
             self._injectPending = False
+        if attempt < _INJECT_MAX_ATTEMPTS and self._canInject():
+            self._scheduleInject(_INJECT_RETRY_DELAY, attempt + 1)
+
+    def _onInjectWatchdog(self, generation, attempt):
+        self._injectWatchdogCallbackId = None
+        if generation != self._injectGeneration:
+            return
+        if self._injectorView is not None:
+            self._injectPending = False
+            return
+        self._injectPending = False
+        if attempt < _INJECT_MAX_ATTEMPTS and self._canInject():
+            self._scheduleInject(_INJECT_RETRY_DELAY, attempt + 1)
 
     def _onInjectorReady(self, view):
+        _cancelCallbackSafe(self._injectCallbackId)
+        _cancelCallbackSafe(self._injectWatchdogCallbackId)
+        self._injectCallbackId = None
+        self._injectWatchdogCallbackId = None
+        self._injectPending = False
+        if not (self._enabled and self._lobbyReady and self._hangarVisible):
+            try:
+                view.flashObject.as_setVisible(False)
+            except Exception:
+                pass
+            return
+        if self._injectorView is not None and self._injectorView is not view:
+            if self._panelReady:
+                try:
+                    view.flashObject.as_setVisible(False)
+                except Exception:
+                    pass
+                return
+            try:
+                self._injectorView.flashObject.as_setVisible(False)
+            except Exception:
+                pass
         self._injectorView = view
         self._panelReady = False
-        self._injectPending = False
-        # Force the next _updateVisibility() call to actually push the
-        # visibility flag to this (possibly brand new) panel instance,
-        # instead of assuming it already matches a stale cached state.
         self._lastVisibleState = None
 
     def _onInjectorDisposed(self, view):
-        if view == self._injectorView:
-            self._injectorView = None
-            self._panelReady = False
-            self._injectPending = False
-            self._lastVisibleState = None
+        if view != self._injectorView:
+            return
+        self._injectorView = None
+        self._panelReady = False
+        self._injectPending = False
+        self._lastVisibleState = None
+        if self._canInject():
+            self._scheduleInject(_REINJECT_DELAY)
 
     def _onPanelReady(self, view):
         if view != self._injectorView:
             return
         self._panelReady = True
+        self._lastVisibleState = None
         try:
             flash = self._injectorView.flashObject
             flash.as_setLocalization({
@@ -558,7 +704,14 @@ class MasteryController(object):
             flash.as_setVisible(False)
         except Exception:
             logger.exception('panel init failed')
-        self._refresh()
+            self._injectorView = None
+            self._panelReady = False
+            self._injectPending = False
+            if self._canInject():
+                self._scheduleInject(_REINJECT_DELAY)
+            return
+        self._vehicleReadyAttempts = 0
+        self._scheduleRefresh(0.0)
 
     def _onDragEnd(self, offset):
         try:
@@ -576,10 +729,16 @@ class MasteryController(object):
 
     def _onVehicleChanged(self):
         self._lastVisibleState = None
+        self._vehicleReadyAttempts = 0
+        if self._canInject():
+            self._scheduleInject()
         self._scheduleRefresh(0.2)
 
     def _scheduleRefresh(self, delay=0.5):
         _cancelCallbackSafe(self._refreshCallbackId)
+        self._refreshCallbackId = None
+        if not self._enabled:
+            return
         self._refreshCallbackId = BigWorld.callback(delay, self._doRefresh)
 
     def _doRefresh(self):
@@ -589,22 +748,32 @@ class MasteryController(object):
     def _updateVisibility(self):
         if not (self._panelReady and self._injectorView):
             return
-        visible = bool(self._enabled and self._hangarVisible and self._visibleByData)
+        visible = bool(self._enabled and self._lobbyReady and not self._awaitingRouteEvent and
+                       self._hangarVisible and self._visibleByData)
         if visible == self._lastVisibleState:
             return
-        self._lastVisibleState = visible
         try:
             self._injectorView.flashObject.as_setVisible(visible)
+            self._lastVisibleState = visible
         except Exception:
-            pass
+            self._lastVisibleState = None
 
     def _refresh(self):
         if not (self._panelReady and self._injectorView):
             return
-        if not g_currentVehicle.isPresent():
+        if not (self._enabled and self._lobbyReady and not self._awaitingRouteEvent and
+                self._hangarVisible):
             self._visibleByData = False
             self._updateVisibility()
             return
+        if not g_currentVehicle.isPresent():
+            self._visibleByData = False
+            self._updateVisibility()
+            if self._vehicleReadyAttempts < _VEHICLE_READY_MAX_ATTEMPTS:
+                self._vehicleReadyAttempts += 1
+                self._scheduleRefresh(_VEHICLE_READY_RETRY_DELAY)
+            return
+        self._vehicleReadyAttempts = 0
         tankID = _tankKey(getattr(g_currentVehicle.item, 'intCD', None))
         level = getattr(g_currentVehicle.item, 'level', 0) or _getTankLevelByCD(tankID)
         if tankID is None or (level and level < _MIN_TANK_LEVEL):
@@ -1050,19 +1219,7 @@ class MainMod(object):
     def _onLobbyInitialized(self, event):
         if APP_NAME_SPACE is not None and event.ns != APP_NAME_SPACE.SF_LOBBY:
             return
-        controller = self._controller
-        # If a panel already exists or an injection is already in flight
-        # (e.g. triggered a moment earlier by onAccountShowGUI/enable()),
-        # do NOT force another loadView() here. Doing so races with the
-        # in-flight injection and can create a second, orphaned
-        # MasteryPanelHangar view that never receives further position/
-        # visibility updates - it stays stuck on screen at its default
-        # position, while the "real" panel the controller talks to can end
-        # up hidden. Only (re)inject if we genuinely have nothing pending.
-        if controller._injectorView is not None or controller._injectPending:
-            return
-        controller._panelReady = False
-        controller._injectFlash()
+        self._controller.onLobbyInitialized()
 
 
 _g_mod = MainMod()
