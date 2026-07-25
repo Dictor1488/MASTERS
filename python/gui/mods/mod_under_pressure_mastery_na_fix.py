@@ -17,30 +17,24 @@ def _selectedTankID():
         return None
 
 
-def _showUnavailable(controller, tankID, distribution):
-    """Replace loading with N/A only for the currently selected uncached tank."""
+def _showMasteryUnavailable(controller, tankID):
+    """Replace mastery loading with N/A for the selected uncached tank."""
     if not (controller._panelReady and controller._injectorView):
         return
     if _selectedTankID() != _mastery._tankKey(tankID):
         return
-
-    cache = controller._xpCache if distribution == 'xp' else controller._moeCache
-    if _mastery._dictGetTank(cache, tankID) is not None:
-        # Keep showing stale cached values when a refresh request fails.
+    if _mastery._dictGetTank(controller._xpCache, tankID) is not None:
+        # Keep showing stale cached mastery values when refresh fails.
         return
 
     try:
-        flash = controller._injectorView.flashObject
-        if distribution == 'xp':
-            flash.as_setMasteryData(0, 0, 0, 0)
-        else:
-            flash.as_setMoeData(0, 0, 0, 0)
+        controller._injectorView.flashObject.as_setMasteryData(0, 0, 0, 0)
     except Exception:
-        _mastery.logger.exception('failed to show unavailable API data')
+        _mastery.logger.exception('failed to show unavailable mastery data')
 
 
 def _installFix():
-    if getattr(_mastery, '_NA_FIX_INSTALLED', False):
+    if getattr(_mastery, '_MASTERY_NA_FIX_INSTALLED', False):
         return
 
     originalApiFailure = _mastery.MasteryController._apiFailure
@@ -48,20 +42,22 @@ def _installFix():
 
     def apiFailure(self, tankID, distribution, attempt):
         originalApiFailure(self, tankID, distribution, attempt)
-        pending = self._pendingXp if distribution == 'xp' else self._pendingMoe
-        if attempt >= _mastery._API_MAX_ATTEMPTS and tankID not in pending:
-            _showUnavailable(self, tankID, distribution)
+        if distribution != 'xp':
+            return
+        if attempt >= _mastery._API_MAX_ATTEMPTS and tankID not in self._pendingXp:
+            _showMasteryUnavailable(self, tankID)
 
     def onApiResponse(self, tankID, distribution, response, attempt):
         originalOnApiResponse(self, tankID, distribution, response, attempt)
-        pending = self._pendingXp if distribution == 'xp' else self._pendingMoe
-        cache = self._xpCache if distribution == 'xp' else self._moeCache
-        if tankID not in pending and _mastery._dictGetTank(cache, tankID) is None:
-            _showUnavailable(self, tankID, distribution)
+        if distribution != 'xp':
+            return
+        if (tankID not in self._pendingXp and
+                _mastery._dictGetTank(self._xpCache, tankID) is None):
+            _showMasteryUnavailable(self, tankID)
 
     _mastery.MasteryController._apiFailure = apiFailure
     _mastery.MasteryController._onApiResponse = onApiResponse
-    _mastery._NA_FIX_INSTALLED = True
+    _mastery._MASTERY_NA_FIX_INSTALLED = True
 
 
 _installFix()
