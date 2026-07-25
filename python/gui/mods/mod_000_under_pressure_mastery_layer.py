@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Hide the Masters panel while real lobby windows or dialogs are open.
+"""Keep the Masters panel visible only in the actual hangar.
 
-The panel must stay on WindowLayer.WINDOW. Registering it as SUB_VIEW destroys
-and recreates the hangar route because a parentless sub-view is treated as a
-replacement for the current hangar view.
+The lobby application and LobbyStateMachine are recreated after a battle.  The
+main mod used to stay subscribed to the destroyed state machine, so its cached
+``_hangarVisible`` flag remained True and the panel leaked into battle results,
+storage, shop and other lobby screens.
+
+This compatibility module keeps the controller subscribed to the current state
+machine and validates the live route before every visibility change.  The panel
+remains on WindowLayer.WINDOW; moving a parentless Scaleform view to SUB_VIEW
+would replace and repeatedly recreate the hangar route.
 """
 
 import sys
@@ -18,11 +24,18 @@ except ImportError:
     WindowStatus = None
     ServicesLocator = None
 
+try:
+    from gui.Scaleform.lobby_entry import getLobbyStateMachine
+except ImportError:
+    getLobbyStateMachine = None
 
-_RETRY_DELAY = 0.5
-_MAX_RETRIES = 40
 
-# Permanent lobby infrastructure which must not hide the panel.
+_RETRY_DELAY = 0.25
+_MAX_RETRIES = 80
+_REBIND_DELAY = 0.05
+
+# Permanent hangar infrastructure which must not hide the panel.  Any other
+# loaded lobby window is treated as an overlay and temporarily hides it.
 _IGNORE_TOKENS = (
     'masterypanelhangar', 'under_pressure',
     'mainwindow', 'mainview',
@@ -90,63 +103,80 @@ def _windowText(window):
     parts = []
     content = _safeValue(window, 'content')
     loadParams = _safeValue(window, 'loadParams') or _safeValue(window, '_loadParams')
-    viewKey = _safeValue(window, 'viewKey') or _safeValue(loadParams, 'viewKey') or _safeValue(loadParams, '_viewKey')
+    viewKey = (_safeValue(window, 'viewKey') or _safeValue(loadParams, 'viewKey') or
+               _safeValue(loadParams, '_viewKey'))
     for value in (window, content, loadParams, viewKey):
         _appendObjectText(parts, value)
     return u' '.join(parts)
 
 
-class _MasteryWindowWatcher(object):
+class _MasteryHangarWatcher(object):
     def __init__(self):
         self._controller = None
+        self._lobbyStateMachine = None
         self._windowsManager = None
         self._overlayIDs = set()
         self._retryCallbackID = None
-        self._subscribed = False
+        self._rebindCallbackID = None
+        self._windowsSubscribed = False
 
     def init(self):
         self._tryInit(0)
 
     def fini(self):
         _cancelCallbackSafe(self._retryCallbackID)
+        _cancelCallbackSafe(self._rebindCallbackID)
         self._retryCallbackID = None
-        if self._subscribed and self._windowsManager is not None:
-            try:
-                self._windowsManager.onWindowStatusChanged -= self._onWindowStatusChanged
-            except Exception:
-                pass
-        self._subscribed = False
-        self._windowsManager = None
+        self._rebindCallbackID = None
+        self._unbindRouteListener()
+        self._unbindWindowsManager()
         self._overlayIDs.clear()
         self._applyVisibility()
+        self._controller = None
 
     def hasOverlay(self):
         return bool(self._overlayIDs)
 
     def _tryInit(self, attempt):
         self._retryCallbackID = None
-        if self._subscribed:
-            return
         if not self._patchController():
             self._scheduleRetry(attempt)
             return
-        manager = self._getWindowsManager()
-        if manager is None:
+
+        routeReady = self._bindRouteListener()
+        windowsReady = self._bindWindowsManager()
+        self._syncCurrentRoute()
+        if not (routeReady and windowsReady):
             self._scheduleRetry(attempt)
-            return
-        try:
-            manager.onWindowStatusChanged += self._onWindowStatusChanged
-        except Exception:
-            self._scheduleRetry(attempt)
-            return
-        self._windowsManager = manager
-        self._subscribed = True
 
     def _scheduleRetry(self, attempt):
         if attempt >= _MAX_RETRIES:
             return
+        _cancelCallbackSafe(self._retryCallbackID)
         self._retryCallbackID = BigWorld.callback(
             _RETRY_DELAY, lambda: self._tryInit(attempt + 1))
+
+    def _scheduleRebind(self, delay=_REBIND_DELAY):
+        _cancelCallbackSafe(self._retryCallbackID)
+        _cancelCallbackSafe(self._rebindCallbackID)
+        self._retryCallbackID = None
+        self._rebindCallbackID = BigWorld.callback(delay, self._runRebind)
+
+    def _runRebind(self):
+        self._rebindCallbackID = None
+        self._overlayIDs.clear()
+        self._unbindRouteListener()
+        self._unbindWindowsManager()
+        self._tryInit(0)
+
+    def _stopRuntimeBindings(self):
+        _cancelCallbackSafe(self._retryCallbackID)
+        _cancelCallbackSafe(self._rebindCallbackID)
+        self._retryCallbackID = None
+        self._rebindCallbackID = None
+        self._overlayIDs.clear()
+        self._unbindRouteListener()
+        self._unbindWindowsManager()
 
     def _patchController(self):
         module = _findMasteryModule()
@@ -158,27 +188,164 @@ class _MasteryWindowWatcher(object):
             return False
         self._controller = controller
         controllerClass = controller.__class__
-        if getattr(controllerClass, '_masteryWindowsVisibilityPatched', False):
+        if getattr(controllerClass, '_masteryHangarLifecyclePatched', False):
             return True
 
-        original = controllerClass._updateVisibility
-        controllerClass._masteryOriginalUpdateVisibility = original
+        originalUpdateVisibility = controllerClass._updateVisibility
+        originalEnable = controllerClass.enable
+        originalDisable = controllerClass.disable
+        originalLobbyInitialized = controllerClass.onLobbyInitialized
 
-        def _updateVisibilityWithWindows(instance):
+        controllerClass._masteryOriginalUpdateVisibility = originalUpdateVisibility
+        controllerClass._masteryOriginalEnable = originalEnable
+        controllerClass._masteryOriginalDisable = originalDisable
+        controllerClass._masteryOriginalLobbyInitialized = originalLobbyInitialized
+
+        def _updateVisibilityOnlyInHangar(instance):
             watcher = _g_watcher
-            if watcher.hasOverlay():
-                if getattr(instance, '_panelReady', False) and getattr(instance, '_injectorView', None):
-                    try:
-                        instance._injectorView.flashObject.as_setVisible(False)
-                        instance._lastVisibleState = False
-                    except Exception:
-                        instance._lastVisibleState = None
+            watcher._controller = instance
+            watcher._syncRouteFlags(instance)
+            if watcher.hasOverlay() or not getattr(instance, '_hangarVisible', False):
+                watcher._forceHidden(instance)
                 return
             return controllerClass._masteryOriginalUpdateVisibility(instance)
 
-        controllerClass._updateVisibility = _updateVisibilityWithWindows
-        controllerClass._masteryWindowsVisibilityPatched = True
+        def _enableWithCurrentLobby(instance):
+            result = controllerClass._masteryOriginalEnable(instance)
+            watcher = _g_watcher
+            watcher._controller = instance
+            watcher._scheduleRebind(0.0)
+            return result
+
+        def _disableWithCurrentLobby(instance):
+            watcher = _g_watcher
+            watcher._stopRuntimeBindings()
+            return controllerClass._masteryOriginalDisable(instance)
+
+        def _lobbyInitializedWithCurrentStateMachine(instance):
+            result = controllerClass._masteryOriginalLobbyInitialized(instance)
+            watcher = _g_watcher
+            watcher._controller = instance
+            # Run after every INITIALIZED listener for this lobby has completed.
+            watcher._scheduleRebind(_REBIND_DELAY)
+            return result
+
+        controllerClass._updateVisibility = _updateVisibilityOnlyInHangar
+        controllerClass.enable = _enableWithCurrentLobby
+        controllerClass.disable = _disableWithCurrentLobby
+        controllerClass.onLobbyInitialized = _lobbyInitializedWithCurrentStateMachine
+        controllerClass._masteryHangarLifecyclePatched = True
         return True
+
+    def _bindRouteListener(self):
+        if getLobbyStateMachine is None or self._controller is None:
+            return False
+        try:
+            stateMachine = getLobbyStateMachine()
+        except Exception:
+            stateMachine = None
+        if stateMachine is None:
+            return False
+
+        if self._lobbyStateMachine is not None and self._lobbyStateMachine is not stateMachine:
+            self._unbindRouteListener()
+
+        # Remove first so repeated binding can never duplicate the callback.
+        try:
+            stateMachine.onVisibleRouteChanged -= self._controller._onVisibleRouteChanged
+        except Exception:
+            pass
+        try:
+            stateMachine.onVisibleRouteChanged += self._controller._onVisibleRouteChanged
+        except Exception:
+            return False
+        self._lobbyStateMachine = stateMachine
+        return True
+
+    def _unbindRouteListener(self):
+        stateMachine = self._lobbyStateMachine
+        self._lobbyStateMachine = None
+        if stateMachine is None or self._controller is None:
+            return
+        try:
+            stateMachine.onVisibleRouteChanged -= self._controller._onVisibleRouteChanged
+        except Exception:
+            pass
+
+    def _syncRouteFlags(self, controller):
+        stateMachine = self._lobbyStateMachine
+        if stateMachine is None and getLobbyStateMachine is not None:
+            try:
+                stateMachine = getLobbyStateMachine()
+            except Exception:
+                stateMachine = None
+        routeInfo = _safeValue(stateMachine, 'visibleRouteInfo')
+        try:
+            controller._lobbyReady = controller._isLobbyAppReady()
+        except Exception:
+            pass
+        if routeInfo is None:
+            controller._awaitingRouteEvent = True
+            controller._hangarVisible = False
+        else:
+            controller._awaitingRouteEvent = False
+            try:
+                controller._hangarVisible = bool(controller._isHangarRoute(routeInfo))
+            except Exception:
+                controller._hangarVisible = False
+
+    def _syncCurrentRoute(self):
+        controller = self._controller
+        if controller is None:
+            return
+        self._syncRouteFlags(controller)
+        controller._lastVisibleState = None
+        if getattr(controller, '_hangarVisible', False):
+            try:
+                if getattr(controller, '_injectorView', None) is None:
+                    controller._scheduleInject()
+                else:
+                    controller._scheduleRefresh(0.05)
+            except Exception:
+                pass
+        self._applyVisibility()
+
+    @staticmethod
+    def _forceHidden(controller):
+        if not (getattr(controller, '_panelReady', False) and
+                getattr(controller, '_injectorView', None)):
+            controller._lastVisibleState = None
+            return
+        try:
+            controller._injectorView.flashObject.as_setVisible(False)
+            controller._lastVisibleState = False
+        except Exception:
+            controller._lastVisibleState = None
+
+    def _bindWindowsManager(self):
+        manager = self._getWindowsManager()
+        if manager is None:
+            return False
+        if self._windowsSubscribed and self._windowsManager is manager:
+            return True
+        self._unbindWindowsManager()
+        try:
+            manager.onWindowStatusChanged += self._onWindowStatusChanged
+        except Exception:
+            return False
+        self._windowsManager = manager
+        self._windowsSubscribed = True
+        return True
+
+    def _unbindWindowsManager(self):
+        manager = self._windowsManager
+        self._windowsManager = None
+        if self._windowsSubscribed and manager is not None:
+            try:
+                manager.onWindowStatusChanged -= self._onWindowStatusChanged
+            except Exception:
+                pass
+        self._windowsSubscribed = False
 
     @staticmethod
     def _getWindowsManager():
@@ -203,7 +370,12 @@ class _MasteryWindowWatcher(object):
                 self._applyVisibility()
             return
 
-        if self._controller is None or not getattr(self._controller, '_hangarVisible', False):
+        controller = self._controller
+        if controller is None:
+            return
+        self._syncRouteFlags(controller)
+        if not getattr(controller, '_hangarVisible', False):
+            self._forceHidden(controller)
             return
         try:
             window = self._windowsManager.findWindowById(uniqueID)
@@ -227,10 +399,10 @@ class _MasteryWindowWatcher(object):
         try:
             controller._updateVisibility()
         except Exception:
-            pass
+            self._forceHidden(controller)
 
 
-_g_watcher = _MasteryWindowWatcher()
+_g_watcher = _MasteryHangarWatcher()
 
 
 def init():
