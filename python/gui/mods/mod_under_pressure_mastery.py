@@ -94,7 +94,7 @@ except AttributeError:
     _prefsFilePath = BigWorld.getPreferencesFilePath()
 _CACHE_DIR = os.path.normpath(os.path.join(os.path.dirname(_prefsFilePath), 'mods', 'mastery'))
 _CACHE_FILE = os.path.join(_CACHE_DIR, 'cache.dat')
-_CACHE_VERSION = 11
+_CACHE_VERSION = 12
 _CACHE_TTL_SECONDS = 3 * 24 * 3600
 _CACHE_SAVE_DEBOUNCE = 3.0
 
@@ -430,8 +430,10 @@ class MasteryController(object):
         self._awaitingRouteEvent = True
         self._hangarVisible = False
         self._visibleByData = False
+        self._displayedTankID = None
         self._lastVisibleState = None
-        self._position = [100, 100]
+        # Negative coordinates tell Flash to use the centered default position.
+        self._position = [-1, -1]
         self._viewMode = _DEFAULT_VIEW_MODE
         self._refreshCallbackId = None
         self._vehicleReadyAttempts = 0
@@ -533,6 +535,7 @@ class MasteryController(object):
         self._awaitingRouteEvent = True
         self._hangarVisible = False
         self._visibleByData = False
+        self._displayedTankID = None
         self._pendingXp.clear()
         self._pendingMoe.clear()
         self._resetInjectorState(True)
@@ -794,12 +797,19 @@ class MasteryController(object):
         level = getattr(g_currentVehicle.item, 'level', 0) or _getTankLevelByCD(tankID)
         if tankID is None or (level and level < _MIN_TANK_LEVEL):
             self._visibleByData = False
+            self._displayedTankID = None
             self._updateVisibility()
             try:
                 self._injectorView.flashObject.as_clearData()
             except Exception:
                 pass
             return
+        if tankID != self._displayedTankID:
+            self._displayedTankID = tankID
+            try:
+                self._injectorView.flashObject.as_clearData()
+            except Exception:
+                pass
         self._visibleByData = True
         self._updateVisibility()
         self._captureCurrentStats(tankID)
@@ -959,9 +969,6 @@ class MasteryController(object):
 
     def _apiFailure(self, tankID, distribution, attempt, generation):
         pending = self._pendingXp if distribution == 'xp' else self._pendingMoe
-        if generation != self._vehicleGeneration or not self._enabled:
-            pending.discard(tankID)
-            return
         if attempt < _API_MAX_ATTEMPTS:
             delay = _API_RETRY_BASE_DELAY * (2 ** (attempt - 1))
             BigWorld.callback(delay, lambda: self._requestDistribution(
@@ -1003,8 +1010,9 @@ class MasteryController(object):
         self._scheduleSaveCache()
 
     def _isCurrentVehicleResponse(self, tankID, generation):
-        if (not self._enabled or generation != self._vehicleGeneration or
-                not g_currentVehicle.isPresent()):
+        # A response may have started before several rapid vehicle switches.
+        # It is still valid if the user has returned to that same tank.
+        if not self._enabled or not g_currentVehicle.isPresent():
             return False
         return _tankKey(getattr(g_currentVehicle.item, 'intCD', None)) == _tankKey(tankID)
 
@@ -1024,8 +1032,11 @@ class MasteryController(object):
             self._markHistory = cached.get('markHistory', {}) or {}
             self._lastKnownMark = cached.get('lastKnownMark', {}) or {}
             self._lastKnownStats = cached.get('lastKnownMarkStats', {}) or {}
+            # Version 12 changes the default placement. Do not restore the old
+            # top-left offset once; a later drag will save the new position.
             position = cached.get('position')
-            if isinstance(position, (list, tuple)) and len(position) >= 2:
+            if (int(_version or 0) >= 12 and
+                    isinstance(position, (list, tuple)) and len(position) >= 2):
                 self._position = [int(position[0]), int(position[1])]
             self._viewMode = int(cached.get('viewMode', _DEFAULT_VIEW_MODE))
         except Exception:
@@ -1216,6 +1227,9 @@ class MainMod(object):
             pass
         if tankID is not None:
             self._controller.snapshotForBattle(tankID)
+        # The injector is a global WINDOW view, so it is not disposed
+        # automatically when the lobby app gives way to the battle app.
+        self._controller.disable()
 
     def _onAccountBecomeNonPlayer(self):
         if not isinstance(BigWorld.player(), PlayerAccount):

@@ -119,7 +119,7 @@ package com.under_pressure.mastery
         private var _matrix:Matrix;
 
         private var _disposed:Boolean    = false;
-        private var _offset:Array        = [100, 100];
+        private var _offset:Array        = [-1, -1];
         private var _panelWidth:int      = PANEL_MIN_W;
         private var _panelHeight:int     = 0;
 
@@ -2152,6 +2152,15 @@ package com.under_pressure.mastery
         private function _syncPosition():void
         {
             if (_isDragging || _disposed) return;
+            if (_offset[0] < 0 || _offset[1] < 0)
+            {
+                var sw:int = (stage != null && stage.stageWidth > 0) ? stage.stageWidth : 1920;
+                var sh:int = (stage != null && stage.stageHeight > 0) ? stage.stageHeight : 1080;
+                // Center horizontally and place the panel above the vehicle.
+                this.x = int(Math.max(BOUNDARY_GAP, (sw - _panelWidth) * 0.5));
+                this.y = int(Math.max(BOUNDARY_GAP, sh * 0.32 - _panelHeight * 0.5));
+                return;
+            }
             _clampToScreen(_offset[0], _offset[1]);
             this.x = _reusablePoint.x;
             this.y = _reusablePoint.y;
