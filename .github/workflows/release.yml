@@ -66,43 +66,27 @@ jobs:
           exit 1
         }
 
-        $msiLog = Join-Path $env:RUNNER_TEMP "python-2.7-install.log"
-        & msiexec.exe /i $installer /qn /norestart ALLUSERS=1 /l*v $msiLog
+        $pythonRoot = Join-Path $env:RUNNER_TEMP "python27-portable"
+        $msiLog = Join-Path $env:RUNNER_TEMP "python-2.7-extract.log"
+        New-Item -ItemType Directory -Path $pythonRoot -Force | Out-Null
+
+        # Administrative extraction avoids installing this legacy MSI into
+        # the modern GitHub runner operating system.
+        & msiexec.exe /a $installer /qn /norestart TARGETDIR=$pythonRoot /l*v $msiLog
         if ($LASTEXITCODE -notin @(0, 3010)) {
-          Write-Error "Python 2.7 MSI installation failed with exit code $LASTEXITCODE"
+          Write-Error "Python 2.7 MSI extraction failed with exit code $LASTEXITCODE"
           Get-Content -LiteralPath $msiLog -Tail 100 -ErrorAction SilentlyContinue
           exit 1
         }
 
-        $candidates = @(
-          "C:\Python27\python.exe",
-          "C:\Program Files\Python27\python.exe",
-          "C:\Program Files (x86)\Python27\python.exe",
-          "$env:LOCALAPPDATA\Programs\Python\Python27\python.exe"
-        )
-
-        $registryKeys = @(
-          "HKLM:\SOFTWARE\Python\PythonCore\2.7\InstallPath",
-          "HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore\2.7\InstallPath",
-          "HKCU:\SOFTWARE\Python\PythonCore\2.7\InstallPath"
-        )
-        foreach ($key in $registryKeys) {
-          if (Test-Path -LiteralPath $key) {
-            $installPath = (Get-Item -LiteralPath $key).GetValue('')
-            if ($installPath) {
-              $candidates += Join-Path $installPath "python.exe"
-            }
-          }
-        }
-
-        $python2 = $candidates |
-          Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
-          Select-Object -First 1
+        $python2 = Get-ChildItem -LiteralPath $pythonRoot -Filter python.exe -File -Recurse |
+          Where-Object { $_.FullName -notmatch '\\Tools\\' } |
+          Select-Object -First 1 -ExpandProperty FullName
 
         if (-not $python2) {
-          Write-Error "Python 2.7 MSI completed, but python.exe was not found."
-          Write-Host "Checked paths:"
-          $candidates | ForEach-Object { Write-Host "  $_" }
+          Write-Error "Python 2.7 MSI was extracted, but python.exe was not found."
+          Get-ChildItem -LiteralPath $pythonRoot -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 100 -ExpandProperty FullName
           Get-Content -LiteralPath $msiLog -Tail 100 -ErrorAction SilentlyContinue
           exit 1
         }
