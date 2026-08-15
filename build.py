@@ -248,13 +248,13 @@ def build_python(config: AppConfig) -> None:
         config: The application configuration.
     """
     python_source_dir = pathlib.Path('python')
-    if not config.software.python:
-        raise ValueError("Python executable path is not configured in build.json")
+    python_command = _find_python27(config.software.python)
+    logger.info("Using Python 2.7 compiler: %s", ' '.join(python_command))
 
     for file_path in python_source_dir.rglob('*.py'):
         try:
             subprocess.check_output(
-                [config.software.python, '-m', 'py_compile', str(file_path)],
+                python_command + ['-m', 'py_compile', str(file_path)],
                 stderr=subprocess.STDOUT,
                 text=True,
                 encoding='utf-8'
@@ -262,6 +262,51 @@ def build_python(config: AppConfig) -> None:
             logger.info('Python compiled: %s', file_path)
         except subprocess.CalledProcessError as e:
             logger.error('Python fail compile: %s\n%s', file_path, e.output)
+
+
+def _find_python27(configured: Optional[str]) -> List[str]:
+    """Find a real Python 2.7 interpreter on local and GitHub runners."""
+    candidates: List[List[str]] = []
+
+    if configured:
+        candidates.append([configured])
+
+    env_python2 = os.environ.get('PYTHON2')
+    if env_python2:
+        candidates.append([env_python2])
+
+    for executable in (
+        shutil.which('python2'),
+        shutil.which('python2.7'),
+        r'C:\Python27\python.exe',
+        r'C:\tools\python2\python.exe',
+        r'C:\ProgramData\chocolatey\bin\python2.exe',
+    ):
+        if executable:
+            candidates.append([executable])
+
+    launcher = shutil.which('py')
+    if launcher:
+        candidates.append([launcher, '-2'])
+
+    checked: Set[str] = set()
+    for command in candidates:
+        key = '\0'.join(command).lower()
+        if key in checked:
+            continue
+        checked.add(key)
+        try:
+            output = subprocess.check_output(
+                command + ['--version'], stderr=subprocess.STDOUT,
+                text=True, encoding='utf-8', errors='replace').strip()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        if output.startswith('Python 2.7'):
+            return command
+
+    raise FileNotFoundError(
+        'Python 2.7 was not found. Checked build.json, PYTHON2, PATH, '
+        r'C:\Python27, C:\tools\python2 and the Windows py launcher.')
 
 
 def main() -> None:
