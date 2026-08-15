@@ -53,28 +53,28 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install and locate Python 2.7
+    - name: Install Python 2.7 from python.org
       shell: pwsh
       run: |
-        choco install python2 --version=2.7.18 -y --no-progress
+        $installer = Join-Path $env:RUNNER_TEMP "python-2.7.18.amd64.msi"
+        $url = "https://www.python.org/ftp/python/2.7.18/python-2.7.18.amd64.msi"
 
-        $candidates = @(
-          "C:\Python27\python.exe",
-          "C:\tools\python2\python.exe",
-          "C:\ProgramData\chocolatey\bin\python2.exe"
-        )
-
-        $python2Command = Get-Command python2 -ErrorAction SilentlyContinue
-        if ($python2Command) {
-          $candidates += $python2Command.Source
+        Write-Host "Downloading Python 2.7.18 from $url"
+        & curl.exe --fail --location --retry 5 --retry-all-errors --output $installer $url
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installer)) {
+          Write-Error "Python 2.7 download failed with exit code $LASTEXITCODE"
+          exit 1
         }
 
-        $python2 = $candidates |
-          Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
-          Select-Object -First 1
+        & msiexec.exe /i $installer /qn /norestart ALLUSERS=1 TARGETDIR=C:\Python27
+        if ($LASTEXITCODE -notin @(0, 3010)) {
+          Write-Error "Python 2.7 MSI installation failed with exit code $LASTEXITCODE"
+          exit 1
+        }
 
-        if (-not $python2) {
-          Write-Error "Python 2.7 was installed but python.exe could not be located."
+        $python2 = "C:\Python27\python.exe"
+        if (-not (Test-Path -LiteralPath $python2)) {
+          Write-Error "Python 2.7 executable was not created: $python2"
           exit 1
         }
 
