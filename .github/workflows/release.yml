@@ -53,9 +53,39 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install Python 2.7 via Chocolatey
+    - name: Install and locate Python 2.7
+      shell: pwsh
       run: |
-        choco install python2 -y --no-progress
+        choco install python2 --version=2.7.18 -y --no-progress
+
+        $candidates = @(
+          "C:\Python27\python.exe",
+          "C:\tools\python2\python.exe",
+          "C:\ProgramData\chocolatey\bin\python2.exe"
+        )
+
+        $python2Command = Get-Command python2 -ErrorAction SilentlyContinue
+        if ($python2Command) {
+          $candidates += $python2Command.Source
+        }
+
+        $python2 = $candidates |
+          Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+          Select-Object -First 1
+
+        if (-not $python2) {
+          Write-Error "Python 2.7 was installed but python.exe could not be located."
+          exit 1
+        }
+
+        $version = & $python2 --version 2>&1
+        if ($version -notmatch '^Python 2\.7') {
+          Write-Error "Expected Python 2.7, found: $version"
+          exit 1
+        }
+
+        "PYTHON2=$python2" >> $env:GITHUB_ENV
+        Write-Host "Python 2.7: $python2 ($version)"
 
     - name: Install Java (required for Flex SDK)
       if: inputs.build_swf == true || github.event_name == 'push'
@@ -368,7 +398,7 @@ jobs:
             version = 5
             software = @{
                 animate = " "
-                python = "C:/Python27/python.exe"
+                python = $env:PYTHON2
             }
             game = @{
                 force = $false
@@ -391,6 +421,16 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "=== Pre-build verification ===" -ForegroundColor Cyan
+
+        Write-Host "Python 3 used to run build.py:" -ForegroundColor Green
+        python --version
+
+        if (-not $env:PYTHON2 -or -not (Test-Path -LiteralPath $env:PYTHON2)) {
+            Write-Error "PYTHON2 does not point to an existing Python 2.7 executable: $env:PYTHON2"
+            exit 1
+        }
+        Write-Host "Python 2.7 used to compile the mod:" -ForegroundColor Green
+        & $env:PYTHON2 --version
         
         # Check SWF files
         $swfPath = "as3/bin"
