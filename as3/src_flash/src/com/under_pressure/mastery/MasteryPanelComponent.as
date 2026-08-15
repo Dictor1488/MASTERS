@@ -90,7 +90,6 @@ package com.under_pressure.mastery
         private var _background:Shape;
         private var _graphLayer:Shape;
         private var _dragHit:Sprite;
-        private var _expandBtn:Sprite;
         private var _markBadgeBtn:Sprite;
         private var _markBadge:Sprite;
         private var _markBadgeBg:Shape;
@@ -199,7 +198,6 @@ package com.under_pressure.mastery
             addChild(_markLabel);
 
             _createDragHit();
-            _createExpandBtn();
             _createMarkBadge();
             _createMarkBadgeBtn();
             _setupDragListeners();
@@ -436,15 +434,6 @@ package com.under_pressure.mastery
             _panelHeight = y;
             _drawBackground();
             _redrawDragHit();
-            // Expand button only makes sense when the graph is visible —
-            // it opens a panel which is fundamentally a bigger version of that
-            // graph + per-battle stats. In compact (no-graph) view modes the
-            // button would also overlap the data rows, so we hide it there.
-            if (_expandBtn != null)
-            {
-                _expandBtn.visible = showGraph;
-                if (showGraph) _redrawExpandBtn(false);
-            }
             _applyPanelBodyVisibility();
             // ВАЖЛИВО: спочатку _syncPosition щоб this.x/y були актуальні,
             // потім _layoutMarkBadge який використовує globalToLocal(this)
@@ -464,7 +453,6 @@ package com.under_pressure.mastery
             if (_background) _background.visible = false;
             if (_graphLayer) _graphLayer.visible = false;
             if (_dragHit) _dragHit.visible = false;
-            if (_expandBtn) _expandBtn.visible = false;
             if (_markLabel) _markLabel.visible = false;
             _hideRow(_xpIcon);
             _hideRow(_xpValue);
@@ -898,24 +886,6 @@ package com.under_pressure.mastery
             _redrawDragHit();
         }
 
-        private function _createExpandBtn():void
-        {
-            _expandBtn = new Sprite();
-            _expandBtn.mouseEnabled  = true;
-            _expandBtn.mouseChildren = false;
-            _expandBtn.buttonMode    = true;
-            _expandBtn.useHandCursor = true;
-            _expandBtn.tabEnabled    = false;
-            _expandBtn.addEventListener(MouseEvent.CLICK, _onExpandClick);
-            _expandBtn.addEventListener(MouseEvent.ROLL_OVER, _onExpandRollOver);
-            _expandBtn.addEventListener(MouseEvent.ROLL_OUT,  _onExpandRollOut);
-            addChild(_expandBtn);
-            _redrawExpandBtn(false);
-        }
-
-        private static const EXPAND_BTN_W:int = 16;
-        private static const EXPAND_BTN_H:int = 14;
-        private static const EXPAND_BTN_PAD:int = 4;
         private static const MARK_BADGE_BTN_W:int = 16;
         private static const MARK_BADGE_BTN_H:int = 28;
         private static const MARK_BADGE_W:int = 198;
@@ -932,64 +902,6 @@ package com.under_pressure.mastery
         private function _mbH():int { return _markBadgeStyle == 2 ? MARK_BADGE_H_HTML : MARK_BADGE_H; }
         private function _mbHExp():int { return _markBadgeStyle == 2 ? MARK_BADGE_H_HTML_EXP : MARK_BADGE_H_EXP; }
         private function _mbCurH():int { return _markBadgeExpanded ? _mbHExp() : _mbH(); }
-
-        private function _redrawExpandBtn(hover:Boolean):void
-        {
-            if (!_expandBtn) return;
-            var g:Graphics = _expandBtn.graphics;
-            g.clear();
-
-            // ── Position: bottom-right corner of the panel ──
-            var btnX:int = _panelWidth  - EXPAND_BTN_W - EXPAND_BTN_PAD;
-            var btnY:int = _panelHeight - EXPAND_BTN_H - EXPAND_BTN_PAD;
-            _expandBtn.x = btnX;
-            _expandBtn.y = btnY;
-
-            // ── Hit area: full button rect (transparent) ──
-            g.beginFill(0x000000, 0.001);
-            g.drawRect(0, 0, EXPAND_BTN_W, EXPAND_BTN_H);
-            g.endFill();
-
-            // ── Subtle background pill (only on hover) ──
-            if (hover)
-            {
-                g.lineStyle(0.5, 0xC8B97A, 0.4);
-                g.beginFill(0x1A1F26, 0.85);
-                g.drawRoundRect(0, 0, EXPAND_BTN_W, EXPAND_BTN_H, 4, 4);
-                g.endFill();
-                g.lineStyle(NaN);
-            }
-
-            // ── Down-pointing chevron ── (▼ style, two-line)
-            var cx:Number = EXPAND_BTN_W * 0.5;
-            var cy:Number = EXPAND_BTN_H * 0.5;
-            var armW:Number = 4;       // half-width of chevron
-            var armH:Number = 2.5;     // half-height of chevron
-            var alpha:Number = hover ? 1.0 : 0.7;
-
-            g.lineStyle(1.5, 0xFFFFFF, alpha, true);
-            g.moveTo(cx - armW, cy - armH);
-            g.lineTo(cx,        cy + armH);
-            g.lineTo(cx + armW, cy - armH);
-            g.lineStyle(NaN);
-        }
-
-        private function _onExpandClick(e:MouseEvent):void
-        {
-            if (_disposed) return;
-            e.stopImmediatePropagation();
-            dispatchEvent(new MasteryPanelEvent(MasteryPanelEvent.EXPAND_TOGGLE, null));
-        }
-
-        private function _onExpandRollOver(e:MouseEvent):void
-        {
-            _redrawExpandBtn(true);
-        }
-
-        private function _onExpandRollOut(e:MouseEvent):void
-        {
-            _redrawExpandBtn(false);
-        }
 
         private function _createMarkBadgeBtn():void
         {
@@ -1142,23 +1054,6 @@ package com.under_pressure.mastery
             var cx:Number = MARK_BADGE_BTN_W * 0.5;
             var cy:Number = MARK_BADGE_BTN_H * 0.5;
             g.lineStyle(1.8, 0xFFFFFF, hover || _markBadgeOpen ? 1.0 : 0.72, true);
-            if (_markBadgeStyle == 2 && _markBadgeOpen)
-            {
-                if (_markBadgeExpanded)
-                {
-                    g.moveTo(cx - 4, cy + 2);
-                    g.lineTo(cx, cy - 2);
-                    g.lineTo(cx + 4, cy + 2);
-                }
-                else
-                {
-                    g.moveTo(cx - 4, cy - 2);
-                    g.lineTo(cx, cy + 2);
-                    g.lineTo(cx + 4, cy - 2);
-                }
-                g.lineStyle(NaN);
-                return;
-            }
             g.moveTo(cx - 4, cy);
             g.lineTo(cx + 4, cy);
             if (!_markBadgeOpen)
@@ -1464,38 +1359,12 @@ package com.under_pressure.mastery
             // при наведенні СВІТЛІШЕ (менша непрозорість темного фону), не темніше
             var alpha:Number = hover ? 0.42 : 0.51;
 
-            var arrowBox:Number = 30;
-            var arrowGap:Number = 3;
-            var arrowX:Number   = bodyX - arrowGap - arrowBox;
-
             g.lineStyle(NaN);
             g.beginFill(0x0B1016, alpha);
             g.drawRect(bodyX, y, w, h);
             g.endFill();
 
             // (сірі "вусика" зверху прибрані)
-
-            g.beginFill(0x0B1016, alpha);
-            g.drawRect(arrowX, y, arrowBox, arrowBox);
-            g.endFill();
-            g.lineStyle(NaN);
-
-            g.lineStyle(1.8, 0xFFDF9A, hover ? 1.0 : 0.9, true);
-            var acx:Number = arrowX + arrowBox / 2;
-            var acy:Number = y + arrowBox / 2;
-            if (expanded)
-            {
-                g.moveTo(acx - 4, acy - 2);
-                g.lineTo(acx, acy + 2);
-                g.lineTo(acx + 4, acy - 2);
-            }
-            else
-            {
-                g.moveTo(acx - 2, acy - 5);
-                g.lineTo(acx + 3, acy);
-                g.lineTo(acx - 2, acy + 5);
-            }
-            g.lineStyle(NaN);
 
             if (expanded)
             {
@@ -1946,7 +1815,6 @@ package com.under_pressure.mastery
 
         private function _onMarkBadgeMouseUp(e:MouseEvent):void
         {
-            var wasMoved:Boolean = _badgeDragMoved;
             _isBadgeDragging = false;
             _badgeDragMoved = false;
             if (stage)
@@ -1954,20 +1822,7 @@ package com.under_pressure.mastery
                 stage.removeEventListener(MouseEvent.MOUSE_MOVE, _onMarkBadgeMouseMove);
                 stage.removeEventListener(MouseEvent.MOUSE_UP, _onMarkBadgeMouseUp);
             }
-            if (_markBadgeStyle == 2 && !wasMoved && _isStyle3BuiltinArrowHit())
-            {
-                _toggleMarkBadgeStyle3Expanded();
-                return;
-            }
             dispatchEvent(new MasteryPanelEvent(MasteryPanelEvent.MARK_BADGE_OFFSET_CHANGED, _markBadgeOffset));
-        }
-
-        private function _isStyle3BuiltinArrowHit():Boolean
-        {
-            if (!_markBadge || !stage) return false;
-            var local:Point = _markBadge.globalToLocal(new Point(stage.mouseX, stage.mouseY));
-            var arrowY:Number = _markBadgeExpanded ? 22 : 0;
-            return local.x >= 1 && local.x <= 31 && local.y >= arrowY && local.y <= arrowY + 30;
         }
 
         private function _redrawDragHit():void
@@ -1988,12 +1843,6 @@ package com.under_pressure.mastery
         private function _teardownDragListeners():void
         {
             if (_dragHit) _dragHit.removeEventListener(MouseEvent.MOUSE_DOWN, _onDragMouseDown);
-            if (_expandBtn)
-            {
-                _expandBtn.removeEventListener(MouseEvent.CLICK,     _onExpandClick);
-                _expandBtn.removeEventListener(MouseEvent.ROLL_OVER, _onExpandRollOver);
-                _expandBtn.removeEventListener(MouseEvent.ROLL_OUT,  _onExpandRollOut);
-            }
             if (_markBadgeBtn)
             {
                 _markBadgeBtn.removeEventListener(MouseEvent.CLICK,     _onMarkBadgeClick);
@@ -2044,18 +1893,6 @@ package com.under_pressure.mastery
         private function _onDragMouseDown(e:MouseEvent):void
         {
             if (_disposed || !stage) return;
-            // Ignore mouseDown that originated inside the expand button —
-            // it has its own click handler which opens the detail panel.
-            if (_expandBtn != null && _expandBtn.visible)
-            {
-                var localX:Number = e.stageX - this.x;
-                var localY:Number = e.stageY - this.y;
-                if (localX >= _expandBtn.x && localX <= _expandBtn.x + EXPAND_BTN_W
-                 && localY >= _expandBtn.y && localY <= _expandBtn.y + EXPAND_BTN_H)
-                {
-                    return;
-                }
-            }
             if (_markBadgeBtn != null)
             {
                 var btnLocalX:Number = e.stageX - this.x;
