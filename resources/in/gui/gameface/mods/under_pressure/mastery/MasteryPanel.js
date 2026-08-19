@@ -131,8 +131,8 @@ function render(model) {
 
     const xp = [d.thirdClass, d.secondClass, d.firstClass, d.aceTanker];
     const moe = [d.p65, d.p85, d.p95, d.p100];
-    const xpEls = root.querySelectorAll(".up-xp-value");
-    const moeEls = root.querySelectorAll(".up-moe-value");
+    const xpEls = root.querySelectorAll(".up-mastery-row .up-xp-value");
+    const moeEls = root.querySelectorAll(".up-marks-row .up-moe-value");
     const loading = !!d.loading;
     const noData = d.noData || "N/A";
 
