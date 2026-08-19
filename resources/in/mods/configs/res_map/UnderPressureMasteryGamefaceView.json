@@ -1,0 +1,12 @@
+[
+    {
+        "type": "Layout",
+        "path": "coui://gui/gameface/mods/under_pressure/mastery/MasteryPanel.html",
+        "parameters": {
+            "extension": "",
+            "entrance": "UnderPressureMasteryGamefaceView",
+            "impl": "gameface"
+        },
+        "itemID": "UnderPressureMasteryGamefaceView"
+    }
+]
