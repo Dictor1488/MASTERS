@@ -1,0 +1,12 @@
+[
+  {
+    "type": "Layout",
+    "path": "coui://gui/gameface/mods/under_pressure/mastery/MasteryTankStats.html",
+    "parameters": {
+      "extension": "",
+      "entrance": "UnderPressureMasteryTankStatsView",
+      "impl": "gameface"
+    },
+    "itemID": "UnderPressureMasteryTankStatsView"
+  }
+]
