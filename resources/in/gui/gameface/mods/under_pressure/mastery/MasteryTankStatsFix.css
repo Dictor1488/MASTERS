@@ -1,1 +1,40 @@
+/* GameFace stability overrides mirrored from the working MARKS statistics view. */
 .garage-row-dot{display:none!important}
+.inq-tank-cell{
+    position:static!important;
+    width:250px!important;
+    min-width:250px!important;
+    max-width:250px!important;
+    height:27px!important;
+    flex:none!important;
+    display:block!important;
+    padding:0!important;
+    color:#d8dce3!important;
+    font-family:Arial,sans-serif!important;
+    font-size:12px!important;
+    line-height:27px!important;
+    visibility:visible!important;
+    opacity:1!important;
+    overflow:hidden!important;
+    white-space:nowrap!important;
+    text-overflow:ellipsis!important;
+}
+.inq-tank-name{
+    position:static!important;
+    left:auto!important;
+    top:auto!important;
+    width:auto!important;
+    height:auto!important;
+    display:block!important;
+    color:#d8dce3!important;
+    background:transparent!important;
+    font-family:Arial,sans-serif!important;
+    font-size:12px!important;
+    font-weight:400!important;
+    line-height:27px!important;
+    white-space:nowrap!important;
+    overflow:hidden!important;
+    text-overflow:ellipsis!important;
+    visibility:visible!important;
+    opacity:1!important;
+}
