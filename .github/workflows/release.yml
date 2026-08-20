@@ -16,12 +16,9 @@ permissions:
   contents: write
 
 env:
-  FLEX_VERSION: "4.16.1"
-  FLASH_PLAYER_VERSION: "32.0"
-  SWF_VERSION: "39"
   MOD_ID: "mastery_under_inq"
   MOD_NAME: "Masters"
-  MOD_DESCRIPTION: "Hangar mastery and marks thresholds panel"
+  MOD_DESCRIPTION: "Hangar mastery and marks thresholds panel (GameFace)"
 
 jobs:
   build-and-release:
@@ -52,9 +49,6 @@ jobs:
           "PROJECT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          Write-Host "Version: $version"
-          Write-Host "Tag: v$version"
-
       - name: Set up Python 3
         uses: actions/setup-python@v5
         with:
@@ -64,7 +58,6 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir psutil
-          python -c "import psutil; print('psutil', psutil.__version__)"
 
       - name: Install Python 2.7
         shell: pwsh
@@ -73,172 +66,21 @@ jobs:
           if (-not (Test-Path $python27)) {
               $installer = Join-Path $env:RUNNER_TEMP "python-2.7.18.amd64.msi"
               $url = "https://www.python.org/ftp/python/2.7.18/python-2.7.18.amd64.msi"
-
-              $downloaded = $false
-              for ($attempt = 1; $attempt -le 3; $attempt++) {
-                  try {
-                      Write-Host "Downloading Python 2.7.18 (attempt $attempt)..."
-                      Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing -TimeoutSec 300
-                      $downloaded = $true
-                      break
-                  } catch {
-                      Write-Warning $_
-                      if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
-                  }
-              }
-
-              if (-not $downloaded) {
-                  throw "Unable to download Python 2.7.18 from python.org"
-              }
-
+              Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing -TimeoutSec 300
               $process = Start-Process msiexec.exe -ArgumentList @(
                   "/i", $installer,
                   "/qn",
                   "/norestart",
                   "TARGETDIR=C:\Python27"
               ) -Wait -PassThru
-
               if ($process.ExitCode -notin @(0, 3010)) {
                   throw "Python 2.7 installer failed with exit code $($process.ExitCode)"
               }
           }
-
           if (-not (Test-Path $python27)) {
               throw "Python 2.7 was not installed at $python27"
           }
-
           & $python27 --version
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "11"
-
-      - name: Cache Apache Flex SDK
-        id: cache-flex
-        uses: actions/cache@v4
-        with:
-          path: C:\flex-sdk
-          key: flex-sdk-${{ env.FLEX_VERSION }}-player-${{ env.FLASH_PLAYER_VERSION }}-v1
-
-      - name: Download Apache Flex SDK
-        if: steps.cache-flex.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $urls = @(
-              "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
-              "https://dlcdn.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
-          )
-
-          $downloaded = $false
-          foreach ($url in $urls) {
-              try {
-                  Write-Host "Downloading $url"
-                  Invoke-WebRequest -Uri $url -OutFile flex-sdk.zip -UseBasicParsing -TimeoutSec 300
-                  $downloaded = $true
-                  break
-              } catch {
-                  Write-Warning $_
-              }
-          }
-
-          if (-not $downloaded) {
-              throw "Unable to download Apache Flex SDK"
-          }
-
-          Remove-Item C:\flex-sdk -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item C:\flex-sdk-temp -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path C:\flex-sdk | Out-Null
-          Expand-Archive -Path flex-sdk.zip -DestinationPath C:\flex-sdk-temp -Force
-
-          $items = @(Get-ChildItem C:\flex-sdk-temp)
-          if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
-              Get-ChildItem $items[0].FullName | Move-Item -Destination C:\flex-sdk -Force
-          } else {
-              Get-ChildItem C:\flex-sdk-temp | Move-Item -Destination C:\flex-sdk -Force
-          }
-
-          Remove-Item flex-sdk.zip -Force
-          Remove-Item C:\flex-sdk-temp -Recurse -Force
-
-      - name: Configure playerglobal
-        shell: pwsh
-        run: |
-          $source = "as3\libs\playerglobal.swc"
-          if (-not (Test-Path $source)) {
-              throw "Missing $source"
-          }
-
-          $playerDirectory = "C:\flex-sdk\frameworks\libs\player\${{ env.FLASH_PLAYER_VERSION }}"
-          New-Item -ItemType Directory -Path $playerDirectory -Force | Out-Null
-          Copy-Item $source "$playerDirectory\playerglobal.swc" -Force
-          Copy-Item $source "C:\flex-sdk\frameworks\libs\player\playerglobal.swc" -Force
-
-          $flexConfig = "C:\flex-sdk\frameworks\flex-config.xml"
-          $content = Get-Content $flexConfig -Raw
-          $content = $content -replace '\{playerglobalHome\}', 'C:/flex-sdk/frameworks/libs/player'
-          Set-Content -Path $flexConfig -Value $content -Encoding utf8
-
-      - name: Build Masters SWF
-        shell: pwsh
-        run: |
-          $compiler = "C:\flex-sdk\bin\mxmlc.bat"
-          if (-not (Test-Path $compiler)) {
-              throw "mxmlc not found: $compiler"
-          }
-
-          $sourcePath = [System.IO.Path]::GetFullPath("as3\src_flash\src")
-          $outputPath = [System.IO.Path]::GetFullPath("as3\bin")
-          New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-
-          $libraryArguments = @()
-          Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
-              if ($_.Name -ne "playerglobal.swc") {
-                  $libraryArguments += "-external-library-path+=$($_.FullName)"
-              }
-          }
-
-          $targets = @(
-              @{
-                  Name = "MasteryPanelHangar"
-                  Main = [System.IO.Path]::GetFullPath("as3\src_flash\src\com\under_pressure\mastery\MasteryPanelHangar.as")
-                  Output = Join-Path $outputPath "MasteryPanelHangar.swf"
-              }
-          )
-
-          foreach ($target in $targets) {
-              if (-not (Test-Path $target.Main)) {
-                  throw "Missing ActionScript entry point: $($target.Main)"
-              }
-
-              $arguments = @(
-                  "-source-path+=$sourcePath",
-                  "-output=$($target.Output)",
-                  "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
-                  "-swf-version=${{ env.SWF_VERSION }}",
-                  "-strict=true",
-                  "-optimize=true",
-                  "-warnings=true",
-                  "-use-network=true"
-              )
-              $arguments += $libraryArguments
-              $arguments += $target.Main
-
-              Write-Host "Building $($target.Name)..."
-              & $compiler @arguments
-
-              if ($LASTEXITCODE -ne 0) {
-                  throw "SWF compilation failed: $($target.Name)"
-              }
-
-              if (-not (Test-Path $target.Output)) {
-                  throw "SWF was not created: $($target.Output)"
-              }
-
-              $size = [math]::Round((Get-Item $target.Output).Length / 1KB, 2)
-              Write-Host "Built $($target.Output) ($size KB)"
-          }
 
       - name: Create build configuration
         shell: pwsh
@@ -265,19 +107,14 @@ jobs:
               ConvertTo-Json -Depth 4 |
               Set-Content -Path build.json -Encoding utf8
 
-          Get-Content build.json
-
       - name: Build WOTMOD package
         shell: pwsh
         run: |
           python build.py
-
           $package = "build\${{ env.MOD_ID }}_${{ env.PROJECT_VERSION }}.wotmod"
           if (-not (Test-Path $package)) {
               throw "Package was not created: $package"
           }
-
-          Write-Host "Package ready: $package"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
