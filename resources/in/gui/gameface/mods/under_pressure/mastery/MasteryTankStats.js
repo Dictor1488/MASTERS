@@ -1,0 +1,239 @@
+import { ModelObserver } from "../../libs/model.js";
+
+const observer = ModelObserver();
+const SURFACE_W = 1240;
+const SURFACE_H = 760;
+const PAGE_SIZE = 50;
+const ROMAN = {1:"I",2:"II",3:"III",4:"IV",5:"V",6:"VI",7:"VII",8:"VIII",9:"IX",10:"X",11:"XI"};
+const TYPE_LABELS = {"lighttank":"ЛТ","mediumtank":"СТ","heavytank":"ТТ","at-spg":"ПТ-САУ","spg":"САУ","unknown":"—"};
+const MASTERY_ICONS = {
+  1:"img://gui/maps/icons/achievement/48x48/markOfMastery1.png",
+  2:"img://gui/maps/icons/achievement/48x48/markOfMastery2.png",
+  3:"img://gui/maps/icons/achievement/48x48/markOfMastery3.png",
+  4:"img://gui/maps/icons/achievement/48x48/markOfMastery4.png"
+};
+
+let data = {rows: [], total: 0};
+let lastPayload = null;
+let lastW = 0;
+let lastH = 0;
+let state = {
+  levels: new Set(), nations: new Set(), types: new Set(), owned: false,
+  search: "", page: 1, sort: "mastery", desc: true, scrollTop: 0
+};
+
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+function num(v) {
+  const n = Number(v) || 0;
+  return n > 0 ? Math.round(n).toLocaleString("en-US") : "—";
+}
+function tankName(row) {
+  const raw = row && row.vehicleName != null ? row.vehicleName : (row && row.name != null ? row.name : "");
+  const value = String(raw || "").trim();
+  return value || (row && row.id ? "#" + row.id : "—");
+}
+function masteryIcon(level, cls) {
+  const src = MASTERY_ICONS[Number(level) || 0];
+  return src ? '<img class="' + (cls || 'mastery-icon') + '" src="' + src + '" />' : '<span class="mastery-none">—</span>';
+}
+function typeGlyph(type) {
+  const key = String(type || '').toLowerCase();
+  if (key === "lighttank") return '<span class="type-glyph"><span class="type-diamond"></span></span>';
+  if (key === "mediumtank") return '<span class="type-glyph"><span class="type-bars bars-2"><i></i><i></i></span></span>';
+  if (key === "heavytank") return '<span class="type-glyph"><span class="type-bars bars-3"><i></i><i></i><i></i></span></span>';
+  if (key === "at-spg") return '<span class="type-glyph"><span class="type-triangle"></span></span>';
+  if (key === "spg") return '<span class="type-glyph"><span class="type-square"></span></span>';
+  return '<span class="type-glyph"><span class="type-square"></span></span>';
+}
+function typeIcon(type, withLabel) {
+  const key = String(type || '').toLowerCase();
+  const label = TYPE_LABELS[key] || type || "—";
+  return '<span class="native-type" title="' + esc(label) + '">' + typeGlyph(key) + (withLabel ? '<span class="native-type-label">' + esc(label) + '</span>' : '') + '</span>';
+}
+function resizeSurface(width, height) {
+  width = Math.max(SURFACE_W, Math.round(Number(width) || SURFACE_W));
+  height = Math.max(SURFACE_H, Math.round(Number(height) || SURFACE_H));
+  if (width === lastW && height === lastH) return;
+  lastW = width; lastH = height;
+  try { if (typeof viewEnv !== "undefined" && viewEnv.freezeTextureBeforeResize) viewEnv.freezeTextureBeforeResize(); } catch (e) {}
+  try {
+    if (typeof viewEnv !== "undefined") {
+      if (viewEnv.resizeViewPx) viewEnv.resizeViewPx(width, height);
+      else if (viewEnv.resizeViewRem) viewEnv.resizeViewRem(width, height);
+    }
+  } catch (e) {}
+}
+function closeStats() {
+  try { const m = observer.model; if (m && typeof m.onClose === "function") m.onClose({}); } catch (e) {}
+}
+function resetList() {
+  state.page = 1;
+  state.scrollTop = 0;
+  const rows = document.querySelector(".rows");
+  if (rows) rows.scrollTop = 0;
+}
+function normalizeWheelDelta(e) {
+  if (typeof e.deltaY === "number" && e.deltaY !== 0) return e.deltaY;
+  if (typeof e.wheelDelta === "number" && e.wheelDelta !== 0) return -e.wheelDelta;
+  return 0;
+}
+function onRowsWheel(e) {
+  const delta = normalizeWheelDelta(e);
+  if (!delta) return;
+  if (e.preventDefault) e.preventDefault();
+  if (e.stopPropagation) e.stopPropagation();
+  const direction = delta > 0 ? -1 : 1;
+  this.scrollTop = Math.max(0, this.scrollTop + direction * 81);
+  state.scrollTop = Number(this.scrollTop) || 0;
+  return false;
+}
+function unique(values) {
+  const out = [];
+  for (let i = 0; i < values.length; i++) if (out.indexOf(values[i]) < 0) out.push(values[i]);
+  return out;
+}
+function toggleSet(set, value, button) {
+  if (set.has(value)) set.delete(value); else set.add(value);
+  button.classList.toggle("on", set.has(value));
+  resetList();
+  renderRows(true);
+}
+function fillChips(selector, values, set, htmlFn, extraClass) {
+  const wrap = ensureRoot().querySelector(selector);
+  wrap.innerHTML = "";
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i], button = document.createElement("button");
+    button.className = "chip " + extraClass + (set.has(value) ? " on" : "");
+    button.innerHTML = htmlFn(value);
+    button.onclick = (() => { const v = value, b = button; return () => toggleSet(set, v, b); })();
+    wrap.appendChild(button);
+  }
+}
+function renderFilters() {
+  const levels = unique(data.rows.map(r => Number(r.level) || 0).filter(Boolean)).sort((a,b) => a-b);
+  const nations = unique(data.rows.map(r => r.nation || "").filter(Boolean)).sort();
+  const types = unique(data.rows.map(r => r.type || "").filter(Boolean)).sort();
+  fillChips(".level-chips", levels, state.levels, v => esc(ROMAN[v] || v), "level-chip");
+  fillChips(".nation-chips", nations, state.nations, v => '<span class="nation-label">' + esc(String(v).toUpperCase()) + '</span>', "nation-chip");
+  fillChips(".type-chips", types, state.types, v => typeIcon(v, false), "type-chip");
+}
+function filtered() {
+  const rows = data.rows.filter(r =>
+    (!state.levels.size || state.levels.has(Number(r.level))) &&
+    (!state.nations.size || state.nations.has(r.nation)) &&
+    (!state.types.size || state.types.has(r.type)) &&
+    (!state.owned || r.owned) &&
+    (!state.search || tankName(r).toLowerCase().indexOf(state.search) >= 0));
+  const key = state.sort, dir = state.desc ? -1 : 1;
+  rows.sort((a,b) => {
+    let av = a[key], bv = b[key];
+    if (av == null) av = -Infinity;
+    if (bv == null) bv = -Infinity;
+    if (typeof av === "string") { av = av.toLowerCase(); bv = String(bv || "").toLowerCase(); }
+    if (av < bv) return -dir;
+    if (av > bv) return dir;
+    return tankName(a).localeCompare(tankName(b));
+  });
+  return rows;
+}
+function requestThresholds(rows) {
+  const ids = [];
+  for (let i = 0; i < rows.length && ids.length < PAGE_SIZE; i++) {
+    const r = rows[i];
+    if (!(Number(r.thirdClass) > 0 && Number(r.secondClass) > 0 && Number(r.firstClass) > 0 && Number(r.aceTanker) > 0)) ids.push(r.id);
+  }
+  if (!ids.length) return;
+  try { const m = observer.model; if (m && typeof m.onNeedThresholds === "function") m.onNeedThresholds({ids: ids.join(",")}); } catch (e) {}
+}
+
+function ensureRoot() {
+  let root = document.getElementById("stats-root");
+  if (root) return root;
+  root = document.createElement("div");
+  root.id = "stats-root";
+  root.innerHTML = '<div class="shell">' +
+    '<div class="topbar"><div><div class="title">Статистика майстерності</div><div class="subtitle">Танки та пороги досвіду</div></div><div class="spacer"></div><input class="search" placeholder="Пошук танка…"/><button class="close" aria-label="Закрити"><i></i></button></div>' +
+    '<div class="filters">' +
+      '<div class="filter-row filter-primary"><span class="label">Рівень</span><div class="chips level-chips"></div><span class="type-filter-label">Тип</span><div class="chips type-chips"></div><button class="chip owned-toggle" title="Тільки техніка в гаражі" aria-label="В гаражі"><span class="garage-filter-glyph"><i></i></span></button></div>' +
+      '<div class="filter-row nations"><span class="label">Нація</span><div class="chips nation-chips"></div></div>' +
+    '</div>' +
+    '<div class="content"><div class="head"><span>#</span><span data-sort="name">Танк</span><span data-sort="level">Рів.</span><span data-sort="type">Тип</span><span data-sort="mastery">Клас</span><span data-sort="thirdClass">' + masteryIcon(1,'header-mastery-icon') + '</span><span data-sort="secondClass">' + masteryIcon(2,'header-mastery-icon') + '</span><span data-sort="firstClass">' + masteryIcon(3,'header-mastery-icon') + '</span><span data-sort="aceTanker">' + masteryIcon(4,'header-mastery-icon') + '</span></div><div class="rows"></div><div class="footer"><span class="count"></span><span class="hint">50 танків на сторінці</span><div class="pager"></div></div></div>' +
+    '</div>';
+  document.body.appendChild(root);
+  root.querySelector(".close").addEventListener("click", closeStats);
+  root.querySelector(".search").addEventListener("input", e => { state.search = String(e.target.value || "").toLowerCase(); resetList(); renderRows(true); });
+  root.querySelector(".owned-toggle").addEventListener("click", e => { state.owned = !state.owned; e.currentTarget.classList.toggle("on", state.owned); resetList(); renderRows(true); });
+  const sorters = root.querySelectorAll(".head [data-sort]");
+  for (let i = 0; i < sorters.length; i++) sorters[i].addEventListener("click", function() {
+    const key = this.getAttribute("data-sort");
+    if (state.sort === key) state.desc = !state.desc;
+    else { state.sort = key; state.desc = key !== "name"; }
+    resetList(); renderRows(true);
+  });
+  const rows = root.querySelector(".rows");
+  rows.addEventListener("scroll", function() { state.scrollTop = Number(this.scrollTop) || 0; });
+  rows.addEventListener("wheel", onRowsWheel);
+  return root;
+}
+
+function renderRows(resetScroll) {
+  const root = ensureRoot(), rows = filtered(), pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if (state.page > pages) state.page = pages;
+  if (resetScroll) state.scrollTop = 0;
+  const start = (state.page - 1) * PAGE_SIZE, pageRows = rows.slice(start, start + PAGE_SIZE), wrap = root.querySelector(".rows"), keep = state.scrollTop;
+  if (!pageRows.length) wrap.innerHTML = '<div class="empty">Немає танків за вибраними фільтрами</div>';
+  else {
+    let html = "";
+    for (let i = 0; i < pageRows.length; i++) {
+      const r = pageRows[i], name = tankName(r);
+      html += '<div class="row">' +
+        '<span class="muted">' + (start + i + 1) + '</span>' +
+        '<span class="tank-cell" title="' + esc(name) + '">' + esc(name) + (r.owned ? '<span class="garage-row-dot" title="В гаражі"></span>' : '') + '</span>' +
+        '<span>' + esc(ROMAN[Number(r.level)] || r.level || '—') + '</span>' +
+        '<span>' + typeIcon(r.type, true) + '</span>' +
+        '<span class="mastery-cell">' + masteryIcon(r.mastery, 'row-mastery-icon') + '</span>' +
+        '<span>' + num(r.thirdClass) + '</span><span>' + num(r.secondClass) + '</span><span>' + num(r.firstClass) + '</span><span>' + num(r.aceTanker) + '</span></div>';
+    }
+    wrap.innerHTML = html;
+  }
+  wrap.scrollTop = keep;
+  state.scrollTop = Number(wrap.scrollTop) || keep || 0;
+  root.querySelector(".count").textContent = "Показано " + pageRows.length + " з " + rows.length + " (усього " + data.total + ")";
+  const pager = root.querySelector(".pager"); pager.innerHTML = "";
+  function add(label, page, active) {
+    const b = document.createElement("button");
+    b.className = "page" + (active ? " on" : "");
+    b.textContent = label;
+    b.disabled = page < 1 || page > pages;
+    b.onclick = () => { state.page = page; state.scrollTop = 0; renderRows(true); };
+    pager.appendChild(b);
+  }
+  add("‹", state.page - 1, false);
+  let from = Math.max(1, state.page - 2), to = Math.min(pages, from + 4); from = Math.max(1, to - 4);
+  for (let p = from; p <= to; p++) add(String(p), p, p === state.page);
+  add("›", state.page + 1, false);
+  requestThresholds(pageRows);
+}
+
+function render(model) {
+  const root = ensureRoot();
+  if (!model) return;
+  resizeSurface(model.surfaceWidth, model.surfaceHeight);
+  root.style.left = Math.max(0, Math.round((Number(model.surfaceWidth) - SURFACE_W) / 2)) + "px";
+  root.style.top = Math.max(0, Math.round((Number(model.surfaceHeight) - SURFACE_H) / 2)) + "px";
+  const raw = String(model.payload || '{"rows":[],"total":0}');
+  if (raw === lastPayload) return;
+  lastPayload = raw;
+  try { data = JSON.parse(raw); } catch (e) { data = {rows:[], total:0}; }
+  if (!Array.isArray(data.rows)) data.rows = [];
+  renderFilters();
+  renderRows(false);
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape" || e.keyCode === 27) closeStats(); });
+resizeSurface(SURFACE_W, SURFACE_H);
+observer.onUpdate(render);
+observer.subscribe();
+render(observer.model);
