@@ -4,6 +4,7 @@ const observer = ModelObserver();
 const SURFACE_W = 385;
 const SURFACE_H = 80;
 const SURFACE_REASSERT_MS = 4000;
+const DRAG_THRESHOLD_SQ = 36;
 const ICONS = [
     "img://gui/maps/icons/achievement/48x48/markOfMastery1.png",
     "img://gui/maps/icons/achievement/48x48/markOfMastery2.png",
@@ -49,25 +50,33 @@ function makeCell(i) {
 
 let pointerDown = null;
 let pointerMoved = false;
+function movementSq(e) {
+    if (!pointerDown) return 0;
+    const dx = Number(e.clientX) - pointerDown.x;
+    const dy = Number(e.clientY) - pointerDown.y;
+    return dx * dx + dy * dy;
+}
 function bindInteraction(panel) {
     panel.addEventListener("mousedown", e => {
         if (e.button !== 0) return;
-        pointerDown = { x: e.clientX, y: e.clientY };
+        pointerDown = { x: Number(e.clientX), y: Number(e.clientY) };
         pointerMoved = false;
         callCommand("onDrag", { phase: "start" });
     });
     document.addEventListener("mousemove", e => {
         if (!pointerDown) return;
-        const dx = e.clientX - pointerDown.x, dy = e.clientY - pointerDown.y;
-        if (dx * dx + dy * dy > 400) pointerMoved = true;
+        if (movementSq(e) > DRAG_THRESHOLD_SQ) pointerMoved = true;
     });
     document.addEventListener("mouseup", e => {
         if (!pointerDown || e.button !== 0) return;
+        // Re-check the final pointer position too. During a Wulf window move
+        // GameFace may miss one or more mousemove events, but mouseup still
+        // carries the final coordinates.
+        const wasDrag = pointerMoved || movementSq(e) > DRAG_THRESHOLD_SQ;
         callCommand("onDrag", { phase: "end" });
-        const click = !pointerMoved;
         pointerDown = null;
         pointerMoved = false;
-        if (click) callCommand("onNextMode", {});
+        if (!wasDrag) callCommand("onNextMode", {});
     });
 }
 
