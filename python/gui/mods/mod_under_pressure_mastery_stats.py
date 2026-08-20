@@ -25,6 +25,11 @@ try:
 except Exception:
     _core = None
 
+try:
+    from helpers import i18n
+except Exception:
+    i18n = None
+
 _logger = logging.getLogger('under_pressure.masters.stats')
 STATS_RES_ID = 'UnderPressureMasteryTankStatsView'
 _statsActive = None
@@ -34,6 +39,13 @@ _refreshCallbacks = []
 def _safe_int(value, default=0):
     try:
         return int(round(float(value)))
+    except Exception:
+        return default
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
     except Exception:
         return default
 
@@ -79,11 +91,20 @@ def _vehicle_type(item):
                     return dst
             except Exception:
                 pass
+    for attr in ('type', 'vehicleType', 'classTag'):
+        value = _safe_text(getattr(item, attr, u'')).lower()
+        for key in ('lighttank', 'mediumtank', 'heavytank', 'at-spg', 'spg'):
+            if key in value:
+                return key
     return u'unknown'
 
 
 def _nation(item):
     value = getattr(item, 'nationName', None)
+    if value:
+        return _safe_text(value).lower()
+    descriptor = getattr(item, 'descriptor', None)
+    value = getattr(descriptor, 'nationName', None) if descriptor is not None else None
     if value:
         return _safe_text(value).lower()
     try:
@@ -93,25 +114,81 @@ def _nation(item):
         return u'unknown'
 
 
-def _vehicle_name(item, tankID=0):
-    for attr in ('userName', 'shortUserName', 'getUserName', 'getShortUserName', 'name'):
-        value = getattr(item, attr, None)
+def _vehicle_type_descr(item, tankID=0):
+    descriptor = getattr(item, 'descriptor', None)
+    vehicleType = getattr(descriptor, 'type', None) if descriptor is not None else None
+    if vehicleType is not None:
+        return vehicleType
+    if tankID:
         try:
+            from items import vehicles
+            return vehicles.getVehicleType(int(tankID))
+        except Exception:
+            pass
+    return None
+
+
+def _localize_vehicle_string(raw):
+    raw = _safe_text(raw, u'').strip()
+    if not raw:
+        return u''
+    if raw.startswith('#') and i18n is not None:
+        try:
+            value = _safe_text(i18n.makeString(raw), u'').strip()
+            if value and not value.startswith('#'):
+                return value
+        except Exception:
+            pass
+    return raw if not raw.startswith('#') else u''
+
+
+def _vehicle_name(item, tankID=0):
+    for attr in ('userName', 'shortUserName', 'getUserName', 'getShortUserName'):
+        try:
+            value = getattr(item, attr, u'')
             value = value() if callable(value) else value
         except Exception:
-            value = None
-        text = _safe_text(value).strip() if value else u''
+            value = u''
+        text = _localize_vehicle_string(value)
         if text:
-            if attr == 'name':
-                text = text.split(':')[-1].replace('_', ' ')
             return text
+
+    vehicleType = _vehicle_type_descr(item, tankID)
+    if vehicleType is not None:
+        for attr in ('userString', 'shortUserString'):
+            text = _localize_vehicle_string(getattr(vehicleType, attr, u''))
+            if text:
+                return text
+
+    for source in (getattr(item, 'name', u''),
+                   getattr(vehicleType, 'name', u'') if vehicleType is not None else u''):
+        raw = _safe_text(source, u'').strip()
+        if not raw:
+            continue
+        if ':' in raw:
+            raw = raw.split(':', 1)[1]
+        raw = raw.replace('_', ' ').strip()
+        if raw:
+            return raw
     return u'#%d' % int(tankID) if tankID else u'—'
 
 
 def _is_owned(item):
+    for attr in ('isInInventory', 'isInInventory'):
+        try:
+            value = getattr(item, attr, False)
+            value = value() if callable(value) else value
+            if value:
+                return True
+        except Exception:
+            pass
     try:
-        value = getattr(item, 'isInInventory', False)
-        return bool(value() if callable(value) else value)
+        if _safe_int(getattr(item, 'inventoryCount', 0), 0) > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        return _safe_int(getattr(item, 'invID', 0), 0) > 0
     except Exception:
         return False
 
@@ -130,11 +207,39 @@ def _all_vehicle_items():
         return []
 
 
-def _read_mastery(tankID):
+def _dossier_for_item(item, tankID):
+    if tankID <= 0:
+        return None
     try:
-        dossier = ServicesLocator.itemsCache.items.getVehicleDossier(int(tankID))
+        from CurrentVehicle import g_currentVehicle
+        if g_currentVehicle.isPresent():
+            current = g_currentVehicle.item
+            currentID = _safe_int(getattr(current, 'intCD', getattr(current, 'compactDescr', 0)))
+            if currentID == tankID:
+                dossier = g_currentVehicle.getDossier()
+                if dossier is not None:
+                    return dossier
     except Exception:
-        dossier = None
+        pass
+    try:
+        getter = getattr(ServicesLocator.itemsCache.items, 'getVehicleDossier', None)
+        if callable(getter):
+            dossier = getter(int(tankID))
+            if dossier is not None:
+                return dossier
+    except Exception:
+        pass
+    try:
+        getter = getattr(item, 'getDossier', None)
+        if callable(getter):
+            return getter()
+    except Exception:
+        pass
+    return None
+
+
+def _read_mastery(item, tankID):
+    dossier = _dossier_for_item(item, tankID)
     if dossier is None:
         return 0
     for section in ('achievements', 'total', 'a15x15'):
@@ -146,8 +251,7 @@ def _read_mastery(tankID):
             except Exception:
                 pass
     try:
-        achievements = dossier.getAchievements()
-        value = _safe_int(getattr(achievements, 'markOfMastery', 0), 0)
+        value = _safe_int(getattr(dossier.getAchievements(), 'markOfMastery', 0), 0)
         if 0 <= value <= 4:
             return value
     except Exception:
@@ -181,7 +285,7 @@ def _build_rows():
             'type': _vehicle_type(item),
             'nation': _nation(item),
             'owned': _is_owned(item),
-            'mastery': _read_mastery(tankID),
+            'mastery': _read_mastery(item, tankID),
             'thirdClass': _safe_int(xp.get('thirdClass'), 0),
             'secondClass': _safe_int(xp.get('secondClass'), 0),
             'firstClass': _safe_int(xp.get('firstClass'), 0),
@@ -347,10 +451,10 @@ def request_thresholds(rawIDs):
             requested += 1
         except Exception:
             pass
-        if requested >= 12:
+        if requested >= 50:
             break
     if requested:
-        for delay in (0.8, 1.8, 3.5, 5.5):
+        for delay in (1.0, 2.5, 5.0):
             _schedule_refresh(delay)
 
 
