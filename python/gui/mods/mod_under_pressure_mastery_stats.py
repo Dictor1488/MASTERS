@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Clean GameFace statistics window for Under Pressure Masters."""
+"""GameFace tank statistics window for Under Pressure Masters."""
 import json
 import logging
+import re
 
 import BigWorld
 from gui.shared.personality import ServicesLocator
@@ -55,6 +56,15 @@ def _safe_text(value, default=u''):
             return default
 
 
+def _clean_vehicle_name(value):
+    """Strip WoT rich-text tags/icons from names before sending them to GameFace."""
+    text = _safe_text(value, u'')
+    if not text:
+        return u''
+    text = re.sub(u'<[^>]*>', u'', text)
+    return text.replace(u'&nbsp;', u' ').strip()
+
+
 def _controller():
     try:
         return _core._g_mod._controller if _core is not None else None
@@ -84,10 +94,11 @@ def _vehicle_type(item):
                     return dst
             except Exception:
                 pass
-    value = _safe_text(getattr(item, 'type', u''), u'').lower()
-    for key in ('lighttank', 'mediumtank', 'heavytank', 'at-spg', 'spg'):
-        if key in value:
-            return key
+    for attr in ('type', 'vehicleType', 'classTag'):
+        value = _safe_text(getattr(item, attr, u''), u'').lower()
+        for key in ('lighttank', 'mediumtank', 'heavytank', 'at-spg', 'spg'):
+            if key in value:
+                return key
     return u'unknown'
 
 
@@ -117,12 +128,12 @@ def _vehicle_type_descr(item, tankID):
 
 
 def _localized(raw):
-    text = _safe_text(raw, u'').strip()
+    text = _clean_vehicle_name(raw)
     if not text:
         return u''
     if text.startswith('#') and i18n is not None:
         try:
-            localized = _safe_text(i18n.makeString(text), u'').strip()
+            localized = _clean_vehicle_name(i18n.makeString(text))
             if localized and not localized.startswith('#'):
                 return localized
         except Exception:
@@ -131,7 +142,7 @@ def _localized(raw):
 
 
 def _vehicle_name(item, tankID):
-    """Return a visible tank name without relying on GameFace to resolve i18n keys."""
+    """Return the same visible client-side name approach used by current MARKS."""
     for attr in ('userName', 'shortUserName', 'getUserName', 'getShortUserName'):
         try:
             value = getattr(item, attr, u'')
@@ -151,7 +162,7 @@ def _vehicle_name(item, tankID):
 
     for source in (getattr(item, 'name', u''),
                    getattr(vehicleType, 'name', u'') if vehicleType is not None else u''):
-        text = _safe_text(source, u'').strip()
+        text = _clean_vehicle_name(source)
         if not text:
             continue
         if ':' in text:
@@ -163,18 +174,73 @@ def _vehicle_name(item, tankID):
 
 
 def _is_owned(item):
-    for attr in ('isInInventory',):
+    try:
+        value = getattr(item, 'isInInventory', False)
+        value = value() if callable(value) else value
+        if value:
+            return True
+    except Exception:
+        pass
+    for attr in ('inventoryCount', 'invID'):
         try:
-            value = getattr(item, attr, False)
-            value = value() if callable(value) else value
-            if value:
+            if _safe_int(getattr(item, attr, 0), 0) > 0:
                 return True
         except Exception:
             pass
-    for attr in ('inventoryCount', 'invID'):
-        if _safe_int(getattr(item, attr, 0), 0) > 0:
-            return True
     return False
+
+
+def _vehicle_tags(item):
+    tags = set()
+    sources = (item, getattr(item, 'descriptor', None),
+               getattr(getattr(item, 'descriptor', None), 'type', None))
+    for source in sources:
+        if source is None:
+            continue
+        try:
+            values = getattr(source, 'tags', ()) or ()
+            for value in values:
+                tags.add(_safe_text(value).lower().replace('-', '_'))
+        except Exception:
+            pass
+    return tags
+
+
+def _is_regular_stats_vehicle(item, owned, hasStats):
+    """Exclude temporary/event/mode vehicle copies just like current MARKS."""
+    for attr in ('isOnlyForBattleRoyale', 'isOnlyForEpicBattles',
+                 'isOnlyForEventBattles', 'isOnlyForMapsTraining'):
+        try:
+            value = getattr(item, attr, False)
+            if bool(value() if callable(value) else value):
+                return False
+        except Exception:
+            pass
+
+    modeTags = {
+        'battle_royale', 'battle_royale_vehicles', 'epic_battle', 'epic_battles',
+        'event_battle', 'event_battles', 'maps_training', 'mapbox', 'fun_random',
+        'battleroyale', 'epicbattle', 'eventbattle', 'mapstraining', 'funrandom',
+        'comp7', 'onslaught', 'wt_boss', 'wt_hunter', 'observer', 'bot'
+    }
+    tags = _vehicle_tags(item)
+    if tags.intersection(modeTags):
+        return False
+    for tag in tags:
+        if ('battle_royale' in tag or 'battleroyale' in tag or
+                'event_battle' in tag or 'eventbattle' in tag or
+                'maps_training' in tag or 'mapstraining' in tag or 'wt_' in tag):
+            return False
+
+    if not owned and not hasStats:
+        for attr in ('isHidden', 'isSecret'):
+            try:
+                value = getattr(item, attr, False)
+                if bool(value() if callable(value) else value):
+                    return False
+            except Exception:
+                pass
+    return True
 
 
 def _all_vehicle_items():
@@ -263,8 +329,13 @@ def _build_rows():
         level = _safe_int(getattr(item, 'level', 0))
         if level < 5:
             continue
-        name = _vehicle_name(item, tankID)
         xp = _xp_for(ctrl, tankID)
+        owned = _is_owned(item)
+        hasStats = bool(xp) or _read_mastery(item, tankID) > 0
+        if not _is_regular_stats_vehicle(item, owned, hasStats):
+            continue
+        name = _vehicle_name(item, tankID)
+        mastery = _read_mastery(item, tankID)
         rows.append({
             'id': tankID,
             'name': name,
@@ -272,8 +343,8 @@ def _build_rows():
             'level': level,
             'type': _vehicle_type(item),
             'nation': _nation(item),
-            'owned': _is_owned(item),
-            'mastery': _read_mastery(item, tankID),
+            'owned': owned,
+            'mastery': mastery,
             'thirdClass': _safe_int(xp.get('thirdClass'), 0),
             'secondClass': _safe_int(xp.get('secondClass'), 0),
             'firstClass': _safe_int(xp.get('firstClass'), 0),
