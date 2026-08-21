@@ -1,0 +1,12 @@
+/* Exact user-supplied 27x17 vehicle-class icons. No redraw, no recolor. */
+.type-glyph{background-repeat:no-repeat!important;background-position:center!important;background-size:27px 17px!important}
+.type-glyph>span,.type-glyph>i{display:none!important}
+.glyph-atspg{background-image:url("icons/AT-SPG.png")!important}
+.glyph-heavy{background-image:url("icons/heavyTank.png")!important}
+.glyph-light{background-image:url("icons/lightTank.png")!important}
+.glyph-medium{background-image:url("icons/mediumTank.png")!important}
+.glyph-spg{background-image:url("icons/SPG.png")!important}
+.type-chip .type-glyph{background-size:27px 17px!important}
+.row .type-glyph{background-size:27px 17px!important}
+.inq-tank-cell{position:static!important;width:250px!important;min-width:250px!important;max-width:250px!important;height:27px!important;flex:none!important;display:block!important;padding:0!important;color:#d8dce3!important;font-family:Arial,sans-serif!important;font-size:12px!important;line-height:27px!important;visibility:visible!important;opacity:1!important;overflow:hidden!important;white-space:nowrap!important;text-overflow:ellipsis!important}
+.inq-tank-name{position:static!important;left:auto!important;top:auto!important;width:auto!important;height:auto!important;display:block!important;color:#d8dce3!important;background:transparent!important;font-family:Arial,sans-serif!important;font-size:12px!important;font-weight:400!important;line-height:27px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;visibility:visible!important;opacity:1!important}
