@@ -1,6 +1,61 @@
-/* GameFace compatibility fixes, aligned with the working MARKS stats view. */
-.inq-tank-cell{position:static!important;width:250px!important;display:block!important;overflow:hidden!important;white-space:nowrap!important;text-overflow:ellipsis!important;font-family:Arial,"$FieldFont",sans-serif!important;color:#e0e3e7!important;font-weight:600!important}
-.inq-tank-name{position:static!important;display:block!important;width:250px!important;max-width:250px!important;overflow:hidden!important;white-space:nowrap!important;text-overflow:ellipsis!important;font-family:Arial,"$FieldFont",sans-serif!important;color:#e0e3e7!important;font-weight:600!important}
-.native-nation{display:inline-flex;align-items:center;justify-content:center;width:46px;height:28px;overflow:hidden}.native-nation-img{display:block;max-width:42px;max-height:28px}.native-type{display:inline-flex;align-items:center;justify-content:center;min-width:28px}.native-type-img{display:block;max-width:24px;max-height:22px}.native-type-label{margin-left:5px;font-size:10px;color:#8e969f}.mastery-cell{display:flex!important;align-items:center!important}.row-mastery-icon{width:22px;height:22px;object-fit:contain}.header-mastery-icon{width:28px;height:28px;object-fit:contain;vertical-align:middle}.mastery-none{color:#626a74}.garage-row-glyph{display:none!important}
-.close{position:relative}.close:before,.close:after{content:"";position:absolute;left:17px;top:8px;width:2px;height:18px;background:#b8bec6;border-radius:2px}.close:before{transform:rotate(45deg)}.close:after{transform:rotate(-45deg)}.close i{display:none}
-.garage-filter-glyph{position:relative;display:block;width:20px;height:17px;margin:auto}.garage-filter-glyph:before{content:"";position:absolute;left:2px;right:2px;bottom:1px;height:11px;border:1px solid #aeb5bd;border-top:none;border-radius:1px}.garage-filter-glyph:after{content:"";position:absolute;left:3px;top:0;width:12px;height:12px;border-left:2px solid #aeb5bd;border-top:2px solid #aeb5bd;transform:rotate(45deg);border-radius:1px}.garage-filter-glyph i{position:absolute;left:7px;bottom:1px;width:6px;height:7px;border-left:1px solid #aeb5bd;border-right:1px solid #aeb5bd}
+/* GameFace layout fixes aligned with the working MARKS statistics view. */
+.rows{overflow-y:auto!important;overflow-x:hidden!important;min-height:0!important}
+.row{flex:none}.content{min-height:0}
+
+/* Tank name cell. */
+.inq-tank-cell{position:relative!important;display:block!important;min-width:0;height:27px!important;color:#d8dce3!important;font-size:12px!important;font-weight:600!important;padding-right:18px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;line-height:27px!important;visibility:visible!important;opacity:1!important;z-index:2!important}
+.inq-tank-name{position:absolute!important;left:0!important;top:0!important;z-index:20!important;display:block!important;width:238px!important;height:27px!important;color:#e0e4e8!important;background:transparent!important;font-size:12px!important;font-weight:600!important;line-height:27px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;visibility:visible!important;opacity:1!important}
+
+/* Search is intentionally not exposed in this UI. */
+.search{display:none!important}
+
+/* Header. */
+.topbar{height:68px!important;padding-left:94px!important}
+.topbar:before{top:6px!important}
+.topbar .title{font-size:18px!important;line-height:24px!important;margin:0!important;color:#f5f1eb!important}
+.topbar .subtitle{display:none!important}
+.topbar:after{right:72px!important}
+
+/* Filters: level, type and nation are separate rows. */
+.filters{padding:8px 16px 9px!important}
+.filter-primary{position:relative!important;display:block!important;height:72px!important;min-height:72px!important;padding:0 52px 0 0!important;white-space:nowrap!important}
+.filter-primary>.label{position:absolute!important;left:0!important;top:0!important;width:64px!important;height:34px!important;line-height:34px!important}
+.filter-primary .level-chips{position:absolute!important;left:64px!important;top:0!important;height:34px!important;display:flex!important;flex-wrap:nowrap!important}
+.filter-primary .type-label{position:absolute!important;left:0!important;top:38px!important;width:64px!important;height:34px!important;line-height:34px!important;margin:0!important;color:#8f735f!important;font-size:10px!important;font-weight:700!important;letter-spacing:.45px!important;text-transform:uppercase!important}
+.filter-primary .type-chips{position:absolute!important;left:64px!important;top:38px!important;height:34px!important;display:flex!important;flex-wrap:nowrap!important}
+.owned-toggle{position:absolute!important;right:0!important;top:19px!important;width:42px!important;min-width:42px!important;height:34px!important;padding:0!important;margin:0!important}
+.filter-row.nations{height:34px!important;min-height:34px!important;margin-top:4px!important}
+.filter-row.nations>.label{height:34px!important;line-height:34px!important}
+.nation-chips{height:34px!important;display:flex!important;align-items:center!important;flex-wrap:nowrap!important;white-space:nowrap!important}
+.nation-chip,.type-chip,.level-chip{width:50px;height:34px;min-width:50px;padding:3px;margin-right:5px}
+
+/* Local PNG nation/type resources. */
+.native-nation{position:relative;display:block;width:42px;height:28px;margin:0 auto;overflow:hidden}
+.native-nation-img{display:block;width:42px;height:28px;margin:0 auto}
+.native-type{position:relative;display:inline-flex;align-items:center;height:22px;min-width:28px;white-space:nowrap}
+.native-type-img{display:block;max-width:24px;max-height:22px}
+.native-type-label{margin-left:5px;font-size:10px;line-height:14px;color:#b9c1ca;font-weight:600}
+.type-chip .native-type{width:42px;height:28px;justify-content:center}
+.type-chip .native-type-img{max-width:28px;max-height:24px}
+
+/* Mastery icons. */
+.mastery-cell{display:flex!important;align-items:center!important}
+.row-mastery-icon{width:22px;height:22px;object-fit:contain}
+.header-mastery-icon{width:28px;height:28px;object-fit:contain;vertical-align:middle}
+.mastery-none{color:#626a74}
+
+/* Garage filter icon. */
+.garage-filter-glyph{position:absolute;left:8px;top:6px;width:26px;height:22px;display:block}
+.garage-filter-glyph:before{content:"";position:absolute;left:4px;top:8px;width:18px;height:12px;border:2px solid #9fa8b1;border-top:0;box-sizing:border-box}
+.garage-filter-glyph:after{content:"";position:absolute;left:2px;top:1px;width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:10px solid #9fa8b1}
+.garage-filter-glyph i{position:absolute;left:7px;top:10px;width:12px;height:9px;border:2px solid #9fa8b1;border-bottom:0;display:block;box-sizing:border-box;z-index:2}
+.garage-filter-glyph i:after{content:"";position:absolute;left:1px;right:1px;top:3px;height:1px;background:#9fa8b1}
+.owned-toggle.on .garage-filter-glyph:before,.owned-toggle.on .garage-filter-glyph i{border-color:#e6c984}
+.owned-toggle.on .garage-filter-glyph:after{border-bottom-color:#e6c984}
+.owned-toggle.on .garage-filter-glyph i:after{background:#e6c984}
+
+/* Close button. */
+.close{position:relative!important;font-size:0!important}
+.close i{position:absolute;left:9px;top:8px;width:16px;height:18px;display:block!important}
+.close i:before,.close i:after{content:"";position:absolute;left:7px;top:0;width:2px;height:18px;background:#b8c0c9;border-radius:1px}
+.close i:before{transform:rotate(45deg)}.close i:after{transform:rotate(-45deg)}
