@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""GameFace mastery statistics rebuilt from the current MARKS statistics bridge."""
+"""GameFace mastery statistics based on the working MARKS vehicle list."""
 import json
 import logging
 import re
@@ -114,7 +114,6 @@ def _nation(item):
 
 
 def _vehicle_name(item, tankID=0):
-    # Kept intentionally identical to current MARKS resolver.
     for attr in ('userName', 'shortUserName', 'getUserName', 'getShortUserName', 'getName', 'name'):
         value = getattr(item, attr, None)
         try:
@@ -157,66 +156,10 @@ def _is_owned(item):
         return False
 
 
-class _RegistryVehicle(object):
-    """Adapter copied from MARKS for vehicles absent from itemsCache."""
-    def __init__(self, descriptor, compactDescr, nationID):
-        self.descriptor = descriptor
-        self.compactDescr = int(compactDescr)
-        self.intCD = int(compactDescr)
-        self.nationID = int(nationID)
-
-    def __getattr__(self, name):
-        return getattr(self.descriptor, name)
-
-
-def _registry_vehicle_items(knownIDs):
-    result = []
-    try:
-        from items import vehicles
-        from nations import NAMES
-        registry = getattr(vehicles, 'g_list', None)
-        if registry is None:
-            return result
-        for nationID in xrange(len(NAMES)):
-            try:
-                nationList = registry.getList(nationID)
-            except Exception:
-                continue
-            if isinstance(nationList, dict):
-                entries = nationList.iteritems()
-            else:
-                try:
-                    entries = enumerate(nationList or ())
-                except Exception:
-                    continue
-            for itemID, descriptor in entries:
-                if descriptor is None:
-                    continue
-                if isinstance(descriptor, (tuple, list)) and descriptor:
-                    descriptor = descriptor[-1]
-                compactDescr = _safe_int(getattr(descriptor, 'compactDescr', getattr(descriptor, 'intCD', 0)))
-                if compactDescr <= 0:
-                    try:
-                        compactDescr = int(vehicles.makeIntCompactDescrByID('vehicle', int(nationID), int(itemID)))
-                    except Exception:
-                        continue
-                if not any(hasattr(descriptor, attr) for attr in ('tags', 'userString', 'level')):
-                    try:
-                        descriptor = vehicles.getVehicleType(compactDescr)
-                    except Exception:
-                        continue
-                if compactDescr in knownIDs:
-                    continue
-                knownIDs.add(compactDescr)
-                result.append(_RegistryVehicle(descriptor, compactDescr, nationID))
-    except Exception:
-        _logger.exception('Failed to enumerate full vehicle registry')
-    return result
-
-
 def _vehicle_tags(item):
     tags = set()
-    sources = (item, getattr(item, 'descriptor', None), getattr(getattr(item, 'descriptor', None), 'type', None))
+    sources = (item, getattr(item, 'descriptor', None),
+               getattr(getattr(item, 'descriptor', None), 'type', None))
     for source in sources:
         if source is None:
             continue
@@ -229,25 +172,34 @@ def _vehicle_tags(item):
 
 
 def _is_regular_stats_vehicle(item):
-    for attr in ('isOnlyForBattleRoyale', 'isOnlyForEpicBattles', 'isOnlyForEventBattles', 'isOnlyForMapsTraining'):
+    for attr in ('isOnlyForBattleRoyale', 'isOnlyForEpicBattles',
+                 'isOnlyForEventBattles', 'isOnlyForMapsTraining'):
         try:
             value = getattr(item, attr, False)
             if bool(value() if callable(value) else value):
                 return False
         except Exception:
             pass
-    modeTags = {'battle_royale','battle_royale_vehicles','epic_battle','epic_battles','event_battle','event_battles','maps_training','mapbox','fun_random','battleroyale','epicbattle','eventbattle','mapstraining','funrandom','comp7','onslaught','wt_boss','wt_hunter','observer','bot'}
+
+    modeTags = {
+        'battle_royale', 'battle_royale_vehicles', 'epic_battle', 'epic_battles',
+        'event_battle', 'event_battles', 'maps_training', 'mapbox', 'fun_random',
+        'battleroyale', 'epicbattle', 'eventbattle', 'mapstraining', 'funrandom',
+        'comp7', 'onslaught', 'wt_boss', 'wt_hunter', 'observer', 'bot'
+    }
     tags = _vehicle_tags(item)
     if tags.intersection(modeTags):
         return False
     for tag in tags:
-        if ('battle_royale' in tag or 'battleroyale' in tag or 'event_battle' in tag or
-                'eventbattle' in tag or 'maps_training' in tag or 'mapstraining' in tag or 'wt_' in tag):
+        if ('battle_royale' in tag or 'battleroyale' in tag or
+                'event_battle' in tag or 'eventbattle' in tag or
+                'maps_training' in tag or 'mapstraining' in tag or 'wt_' in tag):
             return False
     return True
 
 
 def _all_vehicle_items():
+    """Exactly the same source used by the working MARKS GameFace stats build."""
     try:
         items = ServicesLocator.itemsCache.items
         try:
@@ -255,14 +207,7 @@ def _all_vehicle_items():
             vehicles = items.getVehicles(REQ_CRITERIA.EMPTY)
         except Exception:
             vehicles = items.getVehicles()
-        result = list(vehicles.itervalues()) if isinstance(vehicles, dict) else list(vehicles or ())
-        knownIDs = set()
-        for item in result:
-            tankID = _safe_int(getattr(item, 'intCD', getattr(item, 'compactDescr', 0)))
-            if tankID > 0:
-                knownIDs.add(tankID)
-        result.extend(_registry_vehicle_items(knownIDs))
-        return result
+        return list(vehicles.itervalues()) if isinstance(vehicles, dict) else list(vehicles or ())
     except Exception:
         _logger.exception('Failed to enumerate client vehicles')
         return []
@@ -326,13 +271,20 @@ def _build_rows():
             continue
         name = _vehicle_name(item, tankID)
         xp = _xp_for(ctrl, tankID)
-        rows.append({'id':tankID,'name':name,'vehicleName':name,'level':level,
-                     'type':_vehicle_type(item),'nation':_nation(item),'owned':_is_owned(item),
-                     'mastery':_read_mastery(item,tankID),
-                     'thirdClass':_safe_int(xp.get('thirdClass'),0),
-                     'secondClass':_safe_int(xp.get('secondClass'),0),
-                     'firstClass':_safe_int(xp.get('firstClass'),0),
-                     'aceTanker':_safe_int(xp.get('aceTanker'),0)})
+        rows.append({
+            'id': tankID,
+            'name': name,
+            'vehicleName': name,
+            'level': level,
+            'type': _vehicle_type(item),
+            'nation': _nation(item),
+            'owned': _is_owned(item),
+            'mastery': _read_mastery(item, tankID),
+            'thirdClass': _safe_int(xp.get('thirdClass'), 0),
+            'secondClass': _safe_int(xp.get('secondClass'), 0),
+            'firstClass': _safe_int(xp.get('firstClass'), 0),
+            'aceTanker': _safe_int(xp.get('aceTanker'), 0),
+        })
     rows.sort(key=lambda row: (-row['level'], row['nation'], row['name'].lower()))
     return rows
 
@@ -343,115 +295,161 @@ def _payload():
     if rows and not _statsSampleLogged:
         _statsSampleLogged = True
         sample = rows[0]
-        _logger.warning('Stats payload sample: id=%s name=%r vehicleName=%r', sample.get('id'), sample.get('name'), sample.get('vehicleName'))
+        _logger.warning('Stats payload sample: total=%d id=%s name=%r vehicleName=%r',
+                        len(rows), sample.get('id'), sample.get('name'), sample.get('vehicleName'))
     return json.dumps({'rows': rows, 'total': len(rows)}, ensure_ascii=False, separators=(',', ':'))
 
 
 if _AVAILABLE:
     class StatsVM(ViewModel):
-        __slots__ = ('onClose','onNeedThresholds')
+        __slots__ = ('onClose', 'onNeedThresholds')
+
         def __init__(self):
-            super(StatsVM,self).__init__(properties=3,commands=2)
+            super(StatsVM, self).__init__(properties=3, commands=2)
+
         def _initialize(self):
-            super(StatsVM,self)._initialize()
-            self._addStringProperty('payload','{"rows":[],"total":0}')
-            self._addNumberProperty('surfaceWidth',1280)
-            self._addNumberProperty('surfaceHeight',720)
-            self.onClose=self._addCommand('onClose')
-            self.onNeedThresholds=self._addCommand('onNeedThresholds')
-        def setPayload(self,payload): self._setString(0,_safe_text(payload))
-        def setSurfaceSize(self,w,h): self._setNumber(1,int(w)); self._setNumber(2,int(h))
+            super(StatsVM, self)._initialize()
+            self._addStringProperty('payload', '{"rows":[],"total":0}')
+            self._addNumberProperty('surfaceWidth', 1280)
+            self._addNumberProperty('surfaceHeight', 720)
+            self.onClose = self._addCommand('onClose')
+            self.onNeedThresholds = self._addCommand('onNeedThresholds')
+
+        def setPayload(self, payload):
+            self._setString(0, _safe_text(payload))
+
+        def setSurfaceSize(self, w, h):
+            self._setNumber(1, int(w))
+            self._setNumber(2, int(h))
 
     class StatsView(ViewImpl):
-        _layoutID=ModDynAccessor(STATS_RES_ID)
+        _layoutID = ModDynAccessor(STATS_RES_ID)
+
         def __init__(self):
-            super(StatsView,self).__init__(ViewSettings(self._layoutID(),ViewFlags.VIEW,StatsVM()))
+            super(StatsView, self).__init__(ViewSettings(self._layoutID(), ViewFlags.VIEW, StatsVM()))
+
         @property
-        def viewModel(self): return super(StatsView,self).getViewModel()
+        def viewModel(self):
+            return super(StatsView, self).getViewModel()
+
         def _getEvents(self):
-            return ((self.viewModel.onClose,self._onClose),(self.viewModel.onNeedThresholds,self._onNeedThresholds))
-        def _onClose(self,*args,**kwargs): close_stats()
-        def _onNeedThresholds(self,args=None,*unused,**kwargs):
-            request_thresholds(args.get('ids','') if isinstance(args,dict) else '')
+            return ((self.viewModel.onClose, self._onClose),
+                    (self.viewModel.onNeedThresholds, self._onNeedThresholds))
+
+        def _onClose(self, *args, **kwargs):
+            close_stats()
+
+        def _onNeedThresholds(self, args=None, *unused, **kwargs):
+            request_thresholds(args.get('ids', '') if isinstance(args, dict) else '')
 
     class StatsWindow(WindowImpl):
-        def __init__(self,content):
-            super(StatsWindow,self).__init__(WindowFlags.WINDOW,content=content,layer=WindowLayer.WINDOW)
+        def __init__(self, content):
+            super(StatsWindow, self).__init__(WindowFlags.WINDOW, content=content, layer=WindowLayer.WINDOW)
+
         def _onReady(self):
             self.show(focus=True)
-            try: self.move(0,0,xAnchor=PositionAnchor.LEFT,yAnchor=PositionAnchor.TOP)
-            except Exception: pass
-            try: BigWorld.callback(0.0,refresh_stats)
-            except Exception: refresh_stats()
+            try:
+                self.move(0, 0, xAnchor=PositionAnchor.LEFT, yAnchor=PositionAnchor.TOP)
+            except Exception:
+                pass
+            try:
+                BigWorld.callback(0.0, refresh_stats)
+            except Exception:
+                refresh_stats()
 
 
 def _surface_size():
     try:
-        w,h=GUI.screenResolution()
-        return max(1240,int(w)),max(760,int(h))
+        w, h = GUI.screenResolution()
+        return max(1240, int(w)), max(760, int(h))
     except Exception:
-        return 1240,760
+        return 1240, 760
 
 
 def open_stats():
     global _statsActive
-    ctrl=_controller()
-    if not _AVAILABLE or ctrl is None or not getattr(ctrl,'_hangarVisible',False): return None
+    ctrl = _controller()
+    if not _AVAILABLE or ctrl is None or not getattr(ctrl, '_hangarVisible', False):
+        return None
     if _statsActive is None:
         try:
-            view=StatsView(); window=StatsWindow(view); _statsActive=(window,view); window.load()
+            view = StatsView()
+            window = StatsWindow(view)
+            _statsActive = (window, view)
+            window.load()
         except Exception:
-            _statsActive=None; _logger.exception('Failed to open mastery statistics'); return None
-    else: refresh_stats()
+            _statsActive = None
+            _logger.exception('Failed to open mastery statistics')
+            return None
+    else:
+        refresh_stats()
     return _statsActive[1]
 
 
 def close_stats():
     global _statsActive
-    if _statsActive is None: return
-    window=_statsActive[0]; _statsActive=None
-    try: window.destroy()
-    except Exception: pass
+    if _statsActive is None:
+        return
+    window = _statsActive[0]
+    _statsActive = None
+    try:
+        window.destroy()
+    except Exception:
+        pass
 
 
 def refresh_stats():
-    if _statsActive is None: return
+    if _statsActive is None:
+        return
     try:
-        w,h=_surface_size()
+        w, h = _surface_size()
         with _statsActive[1].viewModel.transaction() as vm:
-            vm.setPayload(_payload()); vm.setSurfaceSize(w,h)
+            vm.setPayload(_payload())
+            vm.setSurfaceSize(w, h)
     except Exception:
         _logger.exception('Mastery statistics refresh failed')
 
 
 def _scheduled_refresh(holder):
     try:
-        if holder[0] in _refreshCallbacks: _refreshCallbacks.remove(holder[0])
-    except Exception: pass
+        if holder[0] in _refreshCallbacks:
+            _refreshCallbacks.remove(holder[0])
+    except Exception:
+        pass
     refresh_stats()
 
 
 def _schedule_refresh(delay):
     try:
-        holder=[None]; holder[0]=BigWorld.callback(delay,lambda:_scheduled_refresh(holder)); _refreshCallbacks.append(holder[0])
-    except Exception: pass
+        holder = [None]
+        holder[0] = BigWorld.callback(delay, lambda: _scheduled_refresh(holder))
+        _refreshCallbacks.append(holder[0])
+    except Exception:
+        pass
 
 
 def request_thresholds(rawIDs):
-    ctrl=_controller()
-    if ctrl is None: return
-    requested=0
+    ctrl = _controller()
+    if ctrl is None:
+        return
+    requested = 0
     for token in _safe_text(rawIDs).split(','):
-        tankID=_safe_int(token.strip())
-        if tankID<=0: continue
-        xp=_xp_for(ctrl,tankID)
-        if all(_safe_int(xp.get(k),0)>0 for k in ('thirdClass','secondClass','firstClass','aceTanker')): continue
+        tankID = _safe_int(token.strip())
+        if tankID <= 0:
+            continue
+        xp = _xp_for(ctrl, tankID)
+        if all(_safe_int(xp.get(k), 0) > 0 for k in ('thirdClass', 'secondClass', 'firstClass', 'aceTanker')):
+            continue
         try:
-            ctrl._requestDistribution(tankID,'xp',generation=getattr(ctrl,'_vehicleGeneration',0)); requested+=1
-        except Exception: pass
-        if requested>=50: break
+            ctrl._requestDistribution(tankID, 'xp', generation=getattr(ctrl, '_vehicleGeneration', 0))
+            requested += 1
+        except Exception:
+            pass
+        if requested >= 50:
+            break
     if requested:
-        for delay in (1.0,2.5,5.0): _schedule_refresh(delay)
+        for delay in (1.0, 2.5, 5.0):
+            _schedule_refresh(delay)
 
 
 def init():
@@ -460,7 +458,9 @@ def init():
 
 def fini():
     for cbid in _refreshCallbacks[:]:
-        try: BigWorld.cancelCallback(cbid)
-        except Exception: pass
+        try:
+            BigWorld.cancelCallback(cbid)
+        except Exception:
+            pass
     del _refreshCallbacks[:]
     close_stats()
