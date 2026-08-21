@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Run the normal MASTERS build with staged output protection enabled."""
+"""Run the normal MASTERS build with staged GameFace protection.
+
+Python bytecode protection is intentionally reserved for PjOrion. Until an
+automatable PjOrion CLI/wrapper is configured, this script refuses to label
+plain Python bytecode as protected.
+"""
 from __future__ import annotations
 
-import json
+import os
 import pathlib
 import sys
 
@@ -12,29 +17,26 @@ from tools.protect_output import protect_tree
 
 _original_zip_folder = build.zip_folder
 _protected_once = False
-_python27_command = None
 
 
-def _load_python27_command():
-    global _python27_command
-    if _python27_command is not None:
-        return _python27_command
-    configured = None
-    config_path = pathlib.Path('build.json')
-    if config_path.is_file():
-        with config_path.open('r', encoding='utf-8') as fh:
-            data = json.load(fh)
-        configured = (data.get('software') or {}).get('python')
-    _python27_command = build._find_python27(configured)
-    return _python27_command
+def _require_pjorion_hook():
+    command = os.environ.get('PJORION_CMD', '').strip()
+    if not command:
+        raise RuntimeError(
+            'PjOrion Python protection is not configured. Set PJORION_CMD to '
+            'an automated PjOrion wrapper/CLI that performs Bytecode -> '
+            'Obfuscate -> Compile py-file before using build_protected.py.'
+        )
+    return command
 
 
 def _protected_zip_folder(source, destination, mode='w', compression=None):
     global _protected_once
     dest = pathlib.Path(destination)
     if dest.suffix.lower() == '.wotmod' and not _protected_once:
-        build.logger.info('Protecting staged JS/CSS/HTML/PYC before packaging...')
-        protect_tree(pathlib.Path(source), _load_python27_command())
+        _require_pjorion_hook()
+        build.logger.info('PjOrion hook configured; protecting staged GameFace files...')
+        protect_tree(pathlib.Path(source))
         _protected_once = True
     if compression is None:
         return _original_zip_folder(source, destination, mode)
