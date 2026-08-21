@@ -171,35 +171,54 @@ def _vehicle_tags(item):
     return tags
 
 
+def _flag_true(item, attr):
+    try:
+        value = getattr(item, attr, False)
+        return bool(value() if callable(value) else value)
+    except Exception:
+        return False
+
+
 def _is_regular_stats_vehicle(item):
-    for attr in ('isOnlyForBattleRoyale', 'isOnlyForEpicBattles',
-                 'isOnlyForEventBattles', 'isOnlyForMapsTraining'):
-        try:
-            value = getattr(item, attr, False)
-            if bool(value() if callable(value) else value):
-                return False
-        except Exception:
-            pass
+    # Use the exact current WoT Vehicle property names. Hidden/secret is NOT
+    # rejected because unreleased supertest vehicles legitimately use it.
+    for attr in ('isModeHidden',
+                 'isOnlyForBattleRoyaleBattles',
+                 'isOnlyForEpicBattles',
+                 'isOnlyForEventBattles',
+                 'isOnlyForMapsTrainingBattles',
+                 'isOnlyForComp7Battles',
+                 'isOnlyForClanWarsBattles'):
+        if _flag_true(item, attr):
+            return False
 
     modeTags = {
-        'battle_royale', 'battle_royale_vehicles', 'epic_battle', 'epic_battles',
-        'event_battle', 'event_battles', 'maps_training', 'mapbox', 'fun_random',
+        'mode_hidden',
+        'battle_royale', 'battle_royale_vehicles',
+        'epic_battle', 'epic_battles',
+        'event_battle', 'event_battles',
+        'maps_training', 'mapbox', 'fun_random',
         'battleroyale', 'epicbattle', 'eventbattle', 'mapstraining', 'funrandom',
-        'comp7', 'onslaught', 'wt_boss', 'wt_hunter', 'observer', 'bot'
+        'comp7', 'onslaught', 'clanwarsbattles',
+        'wt_boss', 'wt_hunter', 'observer', 'bot'
     }
     tags = _vehicle_tags(item)
     if tags.intersection(modeTags):
         return False
     for tag in tags:
-        if ('battle_royale' in tag or 'battleroyale' in tag or
+        if ('mode_hidden' in tag or
+                'battle_royale' in tag or 'battleroyale' in tag or
                 'event_battle' in tag or 'eventbattle' in tag or
-                'maps_training' in tag or 'mapstraining' in tag or 'wt_' in tag):
+                'epic_battle' in tag or 'epicbattle' in tag or
+                'maps_training' in tag or 'mapstraining' in tag or
+                'fun_random' in tag or 'funrandom' in tag or
+                'comp7' in tag or 'onslaught' in tag or
+                'clanwars' in tag or 'wt_' in tag):
             return False
     return True
 
 
 def _all_vehicle_items():
-    """Exactly the same source used by the working MARKS GameFace stats build."""
     try:
         items = ServicesLocator.itemsCache.items
         try:
