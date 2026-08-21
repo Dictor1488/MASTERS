@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Protect files in the staged .wotmod tree without touching repository sources."""
+"""Protect staged GameFace files. Python bytecode protection is handled by PjOrion."""
 from __future__ import annotations
 
-import json
 import os
 import pathlib
 import re
 import shutil
 import subprocess
 import tempfile
-from typing import Iterable, List
+from typing import List
 
 
 def _log(message: str) -> None:
@@ -25,7 +24,6 @@ def _write_text(path: pathlib.Path, text: str) -> None:
 
 
 def minify_html(text: str) -> str:
-    """Conservative HTML minifier safe for GameFace module documents."""
     text = re.sub(r'<!--(?!\[if)[\s\S]*?-->', '', text)
     text = re.sub(r'>\s+<', '><', text)
     text = re.sub(r'[ \t]+', ' ', text)
@@ -34,7 +32,6 @@ def minify_html(text: str) -> str:
 
 
 def minify_css(text: str) -> str:
-    """Remove CSS comments/spacing while preserving quoted strings."""
     out: List[str] = []
     i = 0
     quote = None
@@ -126,23 +123,8 @@ def obfuscate_js(path: pathlib.Path) -> None:
             pass
 
 
-def protect_pyc_files(root: pathlib.Path, python27_command: Iterable[str]) -> int:
-    helper = pathlib.Path(__file__).with_name('protect_pyc27.py').resolve()
-    pycs = sorted(root.rglob('*.pyc'))
-    if not pycs:
-        return 0
-    command = list(python27_command) + [str(helper)] + [str(path) for path in pycs]
-    completed = subprocess.run(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding='utf-8', errors='replace'
-    )
-    if completed.returncode != 0:
-        raise RuntimeError('Python 2.7 pyc protection failed:\n' + completed.stdout)
-    return len(pycs)
-
-
-def protect_tree(root: pathlib.Path, python27_command: Iterable[str]) -> None:
-    """Protect staged files in-place. Repository source files are never touched."""
+def protect_tree(root: pathlib.Path) -> None:
+    """Protect staged JS/CSS/HTML in-place. PYC files must already come from PjOrion."""
     root = pathlib.Path(root)
     if not root.is_dir():
         raise RuntimeError('Protection root does not exist: %s' % root)
@@ -163,7 +145,5 @@ def protect_tree(root: pathlib.Path, python27_command: Iterable[str]) -> None:
         _write_text(path, minify_html(_read_text(path)))
         _log('HTML minified: %s' % path.relative_to(root))
 
-    pyc_count = protect_pyc_files(root, python27_command)
-    _log('PYC hardened: %d' % pyc_count)
-    _log('Protected output complete: js=%d css=%d html=%d pyc=%d' %
-         (len(js_files), len(css_files), len(html_files), pyc_count))
+    _log('Protected GameFace output complete: js=%d css=%d html=%d' %
+         (len(js_files), len(css_files), len(html_files)))
