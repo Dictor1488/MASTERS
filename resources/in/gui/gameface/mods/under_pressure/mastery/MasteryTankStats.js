@@ -1,6 +1,8 @@
 import { ModelObserver } from "../../libs/model.js";
 const observer=ModelObserver(),W=1240,H=760,PAGE=50;
 const ROMAN={1:"I",2:"II",3:"III",4:"IV",5:"V",6:"VI",7:"VII",8:"VIII",9:"IX",10:"X",11:"XI"};
+const ICON_ROOT="icons/";
+const NATION_ASSETS={china:"china.png",czech:"czech.png",france:"france.png",germany:"germany.png",italy:"italy.png",japan:"japan.png",poland:"poland.png",sweden:"sweden.png",uk:"uk.png",usa:"usa.png",ussr:"ussr.png"};
 const TYPES={"lighttank":["ЛТ","lightTank"],"mediumtank":["СТ","mediumTank"],"heavytank":["ТТ","heavyTank"],"at-spg":["ПТ-САУ","AT-SPG"],"spg":["САУ","SPG"]};
 const M={1:"img://gui/maps/icons/achievement/48x48/markOfMastery1.png",2:"img://gui/maps/icons/achievement/48x48/markOfMastery2.png",3:"img://gui/maps/icons/achievement/48x48/markOfMastery3.png",4:"img://gui/maps/icons/achievement/48x48/markOfMastery4.png"};
 let data={rows:[],total:0},lastPayload=null,lastW=0,lastH=0,state={levels:new Set(),nations:new Set(),types:new Set(),owned:false,search:"",page:1,sort:"mastery",desc:true,scrollTop:0};
@@ -9,8 +11,8 @@ function num(v){let n=Number(v)||0;return n>0?Math.round(n).toLocaleString("en-U
 function nameOf(r){let v=String(r&&r.vehicleName!=null?r.vehicleName:(r&&r.name!=null?r.name:"" )).trim();return v||(r&&r.id?"#"+r.id:"—");}
 function img(src,cls){return '<img class="'+cls+'" src="'+src+'" onerror="this.style.display=\'none\'">';}
 function mastery(n,cls){return M[Number(n)]?img(M[Number(n)],cls):'<span class="mastery-none">—</span>';}
-function nation(n){n=String(n||"").toLowerCase();return '<span class="native-nation">'+img('img://gui/maps/icons/filters/nations/'+n+'.png','native-nation-img')+'</span>';}
-function typeIcon(t,label){let x=TYPES[String(t||"").toLowerCase()]||["—",""];return '<span class="native-type">'+(x[1]?img('img://gui/maps/icons/filters/tanks/'+x[1]+'.png','native-type-img'):'')+(label?'<span class="native-type-label">'+esc(x[0])+'</span>':'')+'</span>';}
+function nation(n){n=String(n||"").toLowerCase();let asset=NATION_ASSETS[n];return '<span class="native-nation">'+(asset?img(ICON_ROOT+asset,'native-nation-img'):'')+'</span>';}
+function typeIcon(t,label){let x=TYPES[String(t||"").toLowerCase()]||["—",""];return '<span class="native-type">'+(x[1]?img(ICON_ROOT+x[1]+'.png','native-type-img'):'')+(label?'<span class="native-type-label">'+esc(x[0])+'</span>':'')+'</span>';}
 function resize(w,h){w=Math.max(W,Math.round(Number(w)||W));h=Math.max(H,Math.round(Number(h)||H));if(w===lastW&&h===lastH)return;lastW=w;lastH=h;try{if(viewEnv.freezeTextureBeforeResize)viewEnv.freezeTextureBeforeResize();}catch(e){}try{if(viewEnv.resizeViewPx)viewEnv.resizeViewPx(w,h);else if(viewEnv.resizeViewRem)viewEnv.resizeViewRem(w,h);}catch(e){}}
 function closeStats(){try{let m=observer.model;if(m&&m.onClose)m.onClose({});}catch(e){}}
 function reset(){state.scrollTop=0;let r=document.querySelector('.rows');if(r)r.scrollTop=0;}
