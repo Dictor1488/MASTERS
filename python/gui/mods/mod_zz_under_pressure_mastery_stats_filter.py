@@ -67,10 +67,20 @@ def _bool_attr(source, name):
         return False
 
 
-def _is_hidden_vehicle(item):
+def _sources(item):
     descriptor = getattr(item, 'descriptor', None)
-    sources = (item, descriptor, getattr(descriptor, 'type', None))
-    for source in sources:
+    return (item, descriptor, getattr(descriptor, 'type', None))
+
+
+def _is_supertest_vehicle(item):
+    for source in _sources(item):
+        if _bool_attr(source, 'isOnlyForSupertest'):
+            return True
+    return False
+
+
+def _is_hidden_vehicle(item):
+    for source in _sources(item):
         if source is None:
             continue
         for attr in ('isHidden', 'isSecret', 'isOnlyForSupertest'):
@@ -80,8 +90,7 @@ def _is_hidden_vehicle(item):
 
 
 def _has_real_mastery_data(stats, ctrl, item, tankID):
-    # Equivalent of MARKS' real-data check: a hidden vehicle is only accepted
-    # when the account/distro data proves it is a real statistics vehicle.
+    """Require actual mastery values; mere dossier existence is not evidence."""
     try:
         xp = stats._xp_for(ctrl, tankID) if ctrl is not None else {}
         if any(stats._safe_int(xp.get(key), 0) > 0
@@ -91,8 +100,7 @@ def _has_real_mastery_data(stats, ctrl, item, tankID):
         pass
 
     try:
-        dossier = stats._dossier_for_item(item, tankID)
-        if dossier is not None:
+        if stats._read_mastery(item, tankID) > 0:
             return True
     except Exception:
         pass
@@ -125,6 +133,53 @@ def _vehicle_from_compact_descr(tankID):
         return None
 
 
+def _dedupe_key(stats, item, tankID):
+    try:
+        name = stats._vehicle_name(item, tankID).strip().lower()
+    except Exception:
+        name = u''
+    try:
+        nation = stats._nation(item)
+    except Exception:
+        nation = u''
+    try:
+        level = stats._safe_int(getattr(item, 'level', 0), 0)
+    except Exception:
+        level = 0
+    try:
+        vehicleType = stats._vehicle_type(item)
+    except Exception:
+        vehicleType = u''
+    return (name, nation, level, vehicleType)
+
+
+def _candidate_score(stats, ctrl, item, tankID):
+    score = 0
+    try:
+        if stats._is_owned(item):
+            score += 100
+    except Exception:
+        pass
+    hidden = _is_hidden_vehicle(item)
+    supertest = _is_supertest_vehicle(item)
+    realData = _has_real_mastery_data(stats, ctrl, item, tankID)
+    if not hidden:
+        score += 40
+    if realData:
+        score += 20
+    if supertest:
+        score += 10
+    return score
+
+
+def _append_best(stats, ctrl, selected, item, tankID):
+    key = _dedupe_key(stats, item, tankID)
+    current = selected.get(key)
+    score = _candidate_score(stats, ctrl, item, tankID)
+    if current is None or score > current[0]:
+        selected[key] = (score, tankID, item)
+
+
 def _filtered_vehicle_items():
     stats = _stats_module()
     if stats is None:
@@ -145,27 +200,29 @@ def _filtered_vehicle_items():
         _logger.exception('Failed to enumerate normal client vehicles')
         baseItems = []
 
-    result = []
-    seen = set()
+    selected = {}
+    seenIDs = set()
     skippedHidden = 0
 
     for item in baseItems:
         tankID = stats._safe_int(getattr(item, 'intCD', getattr(item, 'compactDescr', 0)), 0)
-        if tankID <= 0 or tankID in seen:
+        if tankID <= 0 or tankID in seenIDs:
             continue
+        seenIDs.add(tankID)
         if not stats._is_regular_stats_vehicle(item):
             continue
         if not _reasonable_name(stats, item, tankID):
             continue
-        if _is_hidden_vehicle(item) and not _has_real_mastery_data(stats, ctrl, item, tankID):
+        hidden = _is_hidden_vehicle(item)
+        supertest = _is_supertest_vehicle(item)
+        if hidden and not supertest and not _has_real_mastery_data(stats, ctrl, item, tankID):
             skippedHidden += 1
             continue
-        seen.add(tankID)
-        result.append(item)
+        _append_best(stats, ctrl, selected, item, tankID)
 
     addedHidden = 0
     for tankID in sorted(backedIDs):
-        if tankID <= 0 or tankID in seen:
+        if tankID <= 0 or tankID in seenIDs:
             continue
         item = _vehicle_from_compact_descr(tankID)
         if item is None:
@@ -176,12 +233,15 @@ def _filtered_vehicle_items():
             continue
         if not _has_real_mastery_data(stats, ctrl, item, tankID):
             continue
-        seen.add(tankID)
-        result.append(item)
+        seenIDs.add(tankID)
+        _append_best(stats, ctrl, selected, item, tankID)
         addedHidden += 1
 
-    _logger.warning('MASTERS stats filter: rows=%d hiddenAdded=%d hiddenSkipped=%d xp=%d',
-                    len(result), addedHidden, skippedHidden, len(xpBucket))
+    result = [entry[2] for entry in selected.values()]
+    _logger.warning(
+        'MASTERS stats filter: rows=%d hiddenAdded=%d hiddenSkipped=%d duplicatesCollapsed=%d xp=%d',
+        len(result), addedHidden, skippedHidden,
+        max(0, len(seenIDs) - len(result)), len(xpBucket))
     return result
 
 
