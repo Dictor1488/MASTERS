@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Keep Masters tank names identical to the working MARKS resolver."""
+"""Keep Masters stats vehicle source and names identical to the working MARKS build."""
 
 try:
     from gui.mods import mod_under_pressure_mastery_stats as stats
@@ -48,9 +48,35 @@ def _vehicle_name(item, tankID=0):
     return text or (u'#%d' % int(tankID) if tankID else u'—')
 
 
+def _all_vehicle_items():
+    """Use the same vehicle source as the working MARKS GameFace build.
+
+    Do not enumerate items.vehicles.g_list: that registry also contains internal,
+    mode-only and duplicate descriptors. itemsCache still contains client-visible
+    hidden/supertest vehicles, so unreleased random-battle tanks are preserved.
+    """
+    if stats is None:
+        return []
+    try:
+        items = stats.ServicesLocator.itemsCache.items
+        try:
+            from gui.shared.utils.requesters import REQ_CRITERIA
+            vehicles = items.getVehicles(REQ_CRITERIA.EMPTY)
+        except Exception:
+            vehicles = items.getVehicles()
+        return list(vehicles.itervalues()) if isinstance(vehicles, dict) else list(vehicles or ())
+    except Exception:
+        try:
+            stats._logger.exception('Failed to enumerate client vehicles')
+        except Exception:
+            pass
+        return []
+
+
 def _apply():
     if stats is not None:
         stats._vehicle_name = _vehicle_name
+        stats._all_vehicle_items = _all_vehicle_items
 
 
 _apply()
