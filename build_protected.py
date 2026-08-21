@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 
 import build
 from tools.protect_output import protect_tree
@@ -34,9 +35,17 @@ def _remove_old_pyc(source: pathlib.Path) -> pathlib.Path:
     return target
 
 
+def _wait_for_pyc(path: pathlib.Path, timeout: float = 30.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.is_file() and path.stat().st_size > 8:
+            return
+        time.sleep(0.20)
+    raise RuntimeError('PjOrion did not create bytecode: %s' % path)
+
+
 def _check_python27_pyc(path: pathlib.Path) -> None:
-    if not path.is_file() or path.stat().st_size <= 8:
-        raise RuntimeError('PjOrion did not create bytecode: %s' % path)
+    _wait_for_pyc(path)
     magic = path.read_bytes()[:4]
     if magic != b'\x03\xf3\x0d\x0a':
         raise RuntimeError('Unexpected PYC magic for %s: %r' % (path, magic))
