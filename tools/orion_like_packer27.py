@@ -12,7 +12,6 @@ import hashlib
 import marshal
 import os
 import py_compile
-import random
 import sys
 import tempfile
 import zlib
@@ -73,7 +72,7 @@ def pack(source_path, target_path):
         "{d}={b}.b64decode({payload})\n"
         "{d}=''.join(chr(ord({d}[{i}])^ord({k}[{i}%len({k})])) for {i} in xrange(len({d})))\n"
         "exec {m}.loads({z}.decompress({d})) in globals(),globals()\n"
-        "del {b},{z},{m},{k},{d},{i}\n"
+        "del {b},{z},{m},{k},{d}\n"
     ).format(
         b=n_b64, z=n_z, m=n_m, k=n_k, d=n_d, i=n_i,
         key=_literal(key_b64), payload=_literal(payload_b64))
