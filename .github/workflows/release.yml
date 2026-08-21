@@ -162,14 +162,16 @@ jobs:
         run: |
           $package = "build\${{ env.MOD_ID }}_${{ env.PROJECT_VERSION }}.wotmod"
           $check = Join-Path $env:RUNNER_TEMP "wotmod-check"
-          Expand-Archive -Path $package -DestinationPath $check -Force
+          $checkZip = Join-Path $env:RUNNER_TEMP "wotmod-check.zip"
+          Copy-Item -Path $package -Destination $checkZip -Force
+          Expand-Archive -Path $checkZip -DestinationPath $check -Force
 
-          $plainPython = Get-ChildItem -Path $check -Filter *.py -Recurse
+          $plainPython = @(Get-ChildItem -Path $check -Filter *.py -Recurse)
           if ($plainPython.Count -gt 0) {
               throw "Plain .py files leaked into WOTMOD"
           }
 
-          $pycFiles = Get-ChildItem -Path $check -Filter *.pyc -Recurse
+          $pycFiles = @(Get-ChildItem -Path $check -Filter *.pyc -Recurse)
           if ($pycFiles.Count -eq 0) {
               throw "No PYC files found in WOTMOD"
           }
